@@ -35,6 +35,7 @@ from ..models import (
     Transaction,
     TransactionStatus,
     TransactionType,
+    new_uuid,
 )
 
 
@@ -160,6 +161,10 @@ def post_transaction(
         _reject_overdraft(session, user_id, legs, accounts)
 
     transaction = Transaction(
+        # Assigned here rather than left to the column default, which only
+        # runs at INSERT: the audit event below needs the id, and a
+        # column default would still be None at that point.
+        id=new_uuid(),
         user_id=user_id,
         type=tx_type,
         status=TransactionStatus.POSTED,
@@ -176,21 +181,6 @@ def post_transaction(
     ]
 
     session.add(transaction)
-    session.add(
-        AuditEvent(
-            user_id=user_id,
-            action="transaction.posted",
-            object_type="transaction",
-            object_id=transaction.id,
-            operation_id=operation_id,
-            after={
-                "type": tx_type.value,
-                "entries": [
-                    {"account_id": str(leg.account_id), "amount": leg.amount} for leg in legs
-                ],
-            },
-        )
-    )
 
     try:
         session.flush()
@@ -207,6 +197,26 @@ def post_transaction(
         if winner is None:
             raise
         return PostResult(transaction=winner, replayed=True)
+
+    # Audited only after the transaction is known to have landed. Writing
+    # the event first would leave an audit trail claiming a posting that
+    # the unique constraint then rejected.
+    session.add(
+        AuditEvent(
+            user_id=user_id,
+            action="transaction.posted",
+            object_type="transaction",
+            object_id=transaction.id,
+            operation_id=operation_id,
+            after={
+                "type": tx_type.value,
+                "entries": [
+                    {"account_id": str(leg.account_id), "amount": leg.amount} for leg in legs
+                ],
+            },
+        )
+    )
+    session.flush()
 
     return PostResult(transaction=transaction, replayed=False)
 

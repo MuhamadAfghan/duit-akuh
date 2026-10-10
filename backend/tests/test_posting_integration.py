@@ -23,7 +23,15 @@ from app.domain.errors import (
     UnbalancedTransaction,
 )
 from app.domain.ledger import Leg, build_expense, build_transfer
-from app.models import Account, AccountKind, AccountType, Entry, Transaction, TransactionType
+from app.models import (
+    Account,
+    AccountKind,
+    AccountType,
+    AuditEvent,
+    Entry,
+    Transaction,
+    TransactionType,
+)
 from app.services.accounts import (
     expense_category,
     find_accounts_by_name,
@@ -225,9 +233,14 @@ def test_unique_alias_resolves(session, user):
 # ----------------------------------------------------------------------
 
 
+def count_entries(session, user_id) -> int:
+    return session.scalar(select(func.count()).select_from(Entry).where(Entry.user_id == user_id))
+
+
 def test_unbalanced_posting_writes_nothing(session, user):
     bank = make_bank(session, user)
-    before = account_balance(session, user.id, bank.id)
+    balance_before = account_balance(session, user.id, bank.id)
+    entries_before = count_entries(session, user.id)
 
     with pytest.raises(UnbalancedTransaction):
         post_transaction(
@@ -239,10 +252,9 @@ def test_unbalanced_posting_writes_nothing(session, user):
             idempotency_key=f"op-{uuid.uuid4()}",
         )
 
-    assert account_balance(session, user.id, bank.id) == before
-    assert (
-        session.scalar(select(func.count()).select_from(Entry).where(Entry.user_id == user.id)) == 1
-    )
+    assert account_balance(session, user.id, bank.id) == balance_before
+    # Nothing at all was written - not a half-posted leg, not an orphan.
+    assert count_entries(session, user.id) == entries_before
 
 
 def test_overdraft_is_refused_without_explicit_confirmation(session, user):
@@ -408,3 +420,102 @@ def test_zero_amount_entry_is_rejected_by_the_database(session, user):
 
     with pytest.raises(IntegrityError):
         session.flush()
+
+
+# ----------------------------------------------------------------------
+# Audit trail (PRD section 9, AC08)
+# ----------------------------------------------------------------------
+
+
+def test_posting_writes_an_audit_event_pointing_at_the_transaction(session, user):
+    bank = make_bank(session, user)
+    category = expense_category(session, user.id)
+
+    result = post_transaction(
+        session,
+        user_id=user.id,
+        tx_type=TransactionType.EXPENSE,
+        occurred_at=NOW,
+        legs=build_expense(from_account_id=bank.id, expense_account_id=category.id, amount=35_000),
+        idempotency_key=f"op-{uuid.uuid4()}",
+        operation_id="op-abc",
+    )
+
+    event = session.scalar(
+        select(AuditEvent).where(
+            AuditEvent.user_id == user.id,
+            AuditEvent.object_id == result.transaction.id,
+            AuditEvent.action == "transaction.posted",
+        )
+    )
+
+    assert event is not None, "a posting must leave an audit trail"
+    # Regression guard: object_id was previously None because the column
+    # default only runs at INSERT, so the event pointed at nothing.
+    assert event.object_id == result.transaction.id
+    assert event.operation_id == "op-abc"
+    assert event.after["type"] == "expense"
+    assert sum(e["amount"] for e in event.after["entries"]) == 0
+
+
+def test_a_replayed_confirmation_does_not_add_a_second_audit_event(session, user):
+    bank = make_bank(session, user)
+    category = expense_category(session, user.id)
+    key = f"op-{uuid.uuid4()}"
+    legs = build_expense(from_account_id=bank.id, expense_account_id=category.id, amount=35_000)
+
+    results = [
+        post_transaction(
+            session,
+            user_id=user.id,
+            tx_type=TransactionType.EXPENSE,
+            occurred_at=NOW,
+            legs=legs,
+            idempotency_key=key,
+        )
+        for _ in range(2)
+    ]
+
+    assert results[1].replayed is True
+
+    # Scoped to this transaction: the account's opening balance also wrote
+    # a 'transaction.posted' event, so counting by action alone would be
+    # measuring the wrong thing.
+    count = session.scalar(
+        select(func.count())
+        .select_from(AuditEvent)
+        .where(
+            AuditEvent.user_id == user.id,
+            AuditEvent.object_id == results[0].transaction.id,
+        )
+    )
+
+    assert count == 1
+
+
+def test_a_rejected_posting_leaves_no_audit_event(session, user):
+    """An audit trail must not claim a posting that never happened."""
+    bank = make_bank(session, user, balance=100_000)
+    category = expense_category(session, user.id)
+
+    before = session.scalar(
+        select(func.count()).select_from(AuditEvent).where(AuditEvent.user_id == user.id)
+    )
+
+    with pytest.raises(InsufficientBalance):
+        post_transaction(
+            session,
+            user_id=user.id,
+            tx_type=TransactionType.EXPENSE,
+            occurred_at=NOW,
+            legs=build_expense(
+                from_account_id=bank.id, expense_account_id=category.id, amount=999_000
+            ),
+            idempotency_key=f"op-{uuid.uuid4()}",
+        )
+
+    after = session.scalar(
+        select(func.count()).select_from(AuditEvent).where(AuditEvent.user_id == user.id)
+    )
+
+    assert after == before

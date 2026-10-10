@@ -183,7 +183,7 @@ The repo is currently **frontend scaffolding only** — a themed Next.js shell. 
 
 Stack decisions already made (2026-10-10):
 
-- **Backend: FastAPI + PostgreSQL**, per the PRD's recommendation — a separate service from this Next.js app. Not yet created.
+- **Backend: FastAPI + PostgreSQL**, per the PRD's recommendation — a separate service in `backend/`. The ledger foundation exists; see `backend/README.md`.
 - **Auth: own email + password** (needs argon2/bcrypt hashing plus login attempt rate limiting per §9). The template's sign-in/sign-up views exist and can be reused.
 - **AI: the self-hosted `lumi-ai` service** described above, behind a swappable adapter.
 
@@ -197,14 +197,15 @@ Built so far — the chat-first shell (UI only, no real data):
 
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
-- **No backend, no database, no ledger.** FastAPI service, schema, money type and posting engine all still to be built. This is the real foundation and nothing above it is trustworthy until it exists.
+- **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
+- **No HTTP money endpoints yet.** `backend/` exposes only `/health`; AC08 makes per-owner authorization a release gate, so account and transaction endpoints wait on authentication.
 - **`src/sections/chat/stub-orchestrator.js` is a throwaway.** It fakes a draft from a crude regex so the card states can be exercised. Delete it when the orchestrator lands — the model must do the interpreting and the backend must compute every balance.
 - **`CONFIG.auth.skip` is temporarily `true`** so the UI is reachable without the vendor demo API. Must return to `false` before any real data exists.
 - **Auth still points at the vendor demo API** and must be replaced.
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Chat is not streamed.** Cloudflare's 100s deadline makes streaming mandatory once the real LLM is wired.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
-- **No test runner**, while AC01–AC22 are concrete, checkable scenarios. The ledger invariants above are exactly the logic that needs tests before features pile on top.
+- **The frontend has no test runner.** The backend has pytest covering AC01–AC05 and AC08; nothing covers the React side.
 - **The chat thread does not survive navigation.** `ChatView` holds messages in local `useState`, so switching to Ringkasan and back empties the conversation. The PRD wants one thread that continues across sessions and devices (FR15), which only the backend can provide — do not paper over this with client storage; it is the orchestrator's job.
 - **Install prompt UI is missing** (FR16 wants a button where available, plus iOS Share → Add to Home Screen guidance).
 - **`/dashboard/*` still exists** from the template. It is dead weight under the new IA and should be deleted once nothing is being cribbed from it.
@@ -216,6 +217,37 @@ Mobile mechanics worth knowing before touching the shell:
 - `useVirtualKeyboard()` (`src/hooks/`) reads `window.visualViewport` because `dvh` does not shrink for the keyboard on iOS Safari. Its open-threshold is 120px, not 0, so collapsing browser chrome is not mistaken for a keyboard.
 - Safe areas come from `env(safe-area-inset-*)`, enabled by `viewportFit: 'cover'` in the root layout's `viewport` export. Do not add `maximumScale`/`userScalable` there — the PRD requires zoom to stay unblocked.
 - **Icons must be registered** in `src/components/iconify/icon-sets.js` (224 are). An unregistered name is fetched at runtime, which flickers and breaks the offline shell — `Iconify` warns in the console when that happens.
+
+## Backend (`backend/`)
+
+A separate FastAPI + PostgreSQL service. Full detail in `backend/README.md`;
+the essentials:
+
+```sh
+cd backend
+.venv/Scripts/python -m pytest                       # 58 tests
+.venv/Scripts/python -m pytest -m "not integration"  # 38, no database needed
+.venv/Scripts/python -m ruff check .
+.venv/Scripts/alembic upgrade head
+```
+
+**The ledger is double-entry** — every transaction's entries sum to exactly
+zero, debit positive and credit negative. Read `app/models.py`'s module
+docstring before changing anything: that one property is what makes
+transfers non-income (AC02), card payments non-double-counting (AC03), and
+opening balances non-income (AC01). Do not add a code path that adjusts a
+balance directly.
+
+`app/domain/` is **pure** — no database, no framework. New money rules
+belong there with a test, not in a service. `app/services/` owns
+persistence, idempotency and ownership checks.
+
+Money is integer rupiah (`BIGINT`) throughout; `app/money.py` rejects
+non-integral floats rather than rounding (FR03).
+
+Environment comes from `backend/.env` (gitignored). `backend/setup-db.sql`
+is generated per machine, contains the dev role's password, and is also
+gitignored — recreate it rather than looking for it in git.
 
 ## Reference template (`_reference/`, gitignored)
 
