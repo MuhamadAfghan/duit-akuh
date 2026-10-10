@@ -5,39 +5,36 @@
 #   ssh duitakuh 'bash -s' -- api < deploy/rollback.sh
 #
 # Atau ke tarball tertentu:
-#   ssh duitakuh 'bash -s' -- api api-<sha>.tar.gz < deploy/rollback.sh
+#   ssh duitakuh 'bash -s' -- api '' api-<sha>.tar.gz < deploy/rollback.sh
 #
-# `app.old` adalah rilis yang digantikan oleh deploy terakhir, jadi tanpa
-# argumen kedua ini menukar keduanya kembali — instan, tanpa unpack.
+# `app.old` is the release the last deploy replaced, so with no tarball
+# this just swaps the two back — instant, no unpacking.
 #
-# CATATAN: migrasi database TIDAK ikut dibalik. Alembic downgrade harus
-# dijalankan sendiri, dan untuk ledger biasanya justru tidak diinginkan.
+# NOTE: database migrations are NOT reverted. Alembic downgrade has to be
+# run deliberately, and for a ledger that is usually not what you want.
 set -euo pipefail
 
 WHICH="${1:?pilih: web | api}"
-TARBALL="${2:-}"
+APP_DIR="${2:-}"
+TARBALL="${3:-}"
 
 case "$WHICH" in
     web)
-        BASE=/home/rswicent/finance.agann.my.id
-        HOST=finance.rswicentral.my.id
-        INTERP=nodejs
-        APPREL=finance.agann.my.id/app
-        MARKER='/_next/'
-        PROBE='/'
+        APP_DIR="${APP_DIR:-finance.rswicentral.my.id}"
+        INTERP=nodejs; MARKER='/_next/'; PROBE='/'
         ;;
     api)
-        BASE=/home/rswicent/api-finance.agann.my.id
-        HOST=api-finance.rswicentral.my.id
-        INTERP=python
-        APPREL=api-finance.agann.my.id/app
-        MARKER='"status":"ok"'
-        PROBE='/health'
+        APP_DIR="${APP_DIR:-api-finance.rswicentral.my.id}"
+        INTERP=python; MARKER='"status":"ok"'; PROBE='/health'
         ;;
-    *) echo "argumen harus 'web' atau 'api'" >&2; exit 1 ;;
+    *) echo "argumen pertama harus 'web' atau 'api'" >&2; exit 1 ;;
 esac
 
+BASE="$HOME/$APP_DIR"
 APPROOT="$BASE/app"
+# The directory is named after the domain it serves.
+HOST="$APP_DIR"
+
 log() { printf '\n==> %s\n' "$*"; }
 
 if [ -n "$TARBALL" ]; then
@@ -69,7 +66,7 @@ fi
 log "Restart Passenger"
 mkdir -p "$APPROOT/tmp"
 touch "$APPROOT/tmp/restart.txt"
-cloudlinux-selector restart --json --interpreter "$INTERP" --app-root "$APPREL" >/dev/null 2>&1 || true
+cloudlinux-selector restart --json --interpreter "$INTERP" --app-root "$APP_DIR/app" >/dev/null 2>&1 || true
 
 log "Health: https://$HOST$PROBE"
 for _ in 1 2 3 4 5 6; do

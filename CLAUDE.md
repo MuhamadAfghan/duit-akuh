@@ -302,9 +302,16 @@ touch the main domain.**
 | | frontend | backend |
 | --- | --- | --- |
 | domain | `finance.rswicentral.my.id` | `api-finance.rswicentral.my.id` |
-| app root | `~/finance.agann.my.id/app` | `~/api-finance.agann.my.id/app` |
+| app root | `~/finance.rswicentral.my.id/app` | `~/api-finance.rswicentral.my.id/app` |
 | runtime | Node **20.20.2** (Passenger) | Python **3.11.17** (Passenger) |
 | entry | `server.js` (Next standalone) | `passenger_wsgi.py` |
+
+**Each deployment directory is named after the domain it serves**, so the
+GitHub variables `WEB_HOST` and `API_HOST` are the only configuration: one
+value is both the path under `$HOME` and the host the smoke test probes.
+The activate scripts take it as their second argument and hardcode no
+paths. `agann.my.id` was abandoned (see below), so these subdomains are
+the permanent home, not a staging step.
 
 `npm run build` is not enough for this host: set `BUILD_STANDALONE=1` so
 Next emits `server.js` plus a pruned `node_modules`, because the server has
@@ -342,21 +349,34 @@ ssh duitakuh 'bash -s' -- web < deploy/rollback.sh
 
 Rollback does **not** revert migrations, by design.
 
-### Open blockers
+### Open blocker: the vhosts are not live
 
-- **The webserver vhosts are not live.** Both subdomains exist in cPanel
-  (userdata, DNS, AutoSSL all correct) but LiteSpeed has never been given
-  a config rebuild, so every request falls through to
-  `/cgi-sys/defaultwebpage.cgi` and no per-domain access log is created.
-  This needs root: Jagoan support must run `/scripts/rebuildhttpdconf` and
-  restart LiteSpeed. Nothing in the app can work around it.
-- **`finance.agann.my.id` cannot be added.** `agann.my.id` belongs to a
-  different cPanel account on the same server, so cPanel refuses the
-  subdomain ("you can not add a DNS record for a subdomain of another
-  user's domain"). The `*.rswicentral.my.id` pair above is the interim
-  target. Once Jagoan attaches the real domains, change the `WEB_HOST` /
-  `API_HOST` GitHub variables and redeploy — `BACKEND_URL` is baked at
-  build time, so a rebuild is required, not just a restart.
+Both subdomains exist and are configured correctly in cPanel — userdata,
+documentroot, DNS A records and AutoSSL all present — but **LiteSpeed has
+never been given a config rebuild**, so every request falls through to
+`/cgi-sys/defaultwebpage.cgi` and no per-domain access log is ever
+created. Jagoan support has to run `/scripts/rebuildhttpdconf` and restart
+LiteSpeed; there is no user-level equivalent (`multiphp` is not available,
+and deleting + re-adding the subdomain does not trigger one either).
+
+Everything on this side of that boundary is verified: migrations apply to
+MariaDB, the suite passes against it, and `passenger_wsgi.py` returns
+`{"status":"ok"}` when driven as a WSGI callable directly. What is *not*
+yet proven is the webserver handing a request to Passenger, which is
+precisely what the rebuild unblocks — so expect the first real run to be
+the first test of Next-under-Passenger.
+
+Diagnosing this again: the public edge returns HTTP 200 with an
+Imunify360 interstitial even when nothing is running, so check the two
+signals that cannot lie — a loopback probe
+(`curl -k --resolve host:443:127.0.0.1 https://host/`) and whether
+`~/access-logs/<domain>` exists.
+
+`agann.my.id` was dropped deliberately (2026-10-10). It is registered to a
+different cPanel account on this server, so cPanel refused the subdomains
+outright ("you can not add a DNS record for a subdomain of another user's
+domain"), and its apex points at Vercel. Nothing in the repo should refer
+to it.
 
 ## Reference template (`_reference/`, gitignored)
 

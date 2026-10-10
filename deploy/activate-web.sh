@@ -2,28 +2,27 @@
 #
 # Activates a frontend release. Runs ON the cPanel server, piped from the
 # runner:
-#   ssh host 'bash -s' -- <tarball> [smoke-host] < deploy/activate-web.sh
+#   ssh host 'bash -s' -- <tarball> <app-dir> < deploy/activate-web.sh
 #
 # The tarball is a Next.js `output: 'standalone'` bundle: server.js, a
 # pruned node_modules, .next/ and public/. Nothing is installed or built
-# here — the host has no build toolchain and Node caps at 20.20.2.
+# here — the host has no build toolchain and Node caps at 20.20.2. The
+# bundle must have been built on Linux; a Windows build ships
+# @next/swc-win32-* binaries that cannot load.
 #
 # See deploy/activate-api.sh for the host quirks that shape this script
 # (no rsync, fixed Passenger app root, WAF-aware smoke test).
 set -euo pipefail
 
-BASE=/home/rswicent/finance.agann.my.id
-APPROOT="$BASE/app"
 INCOMING="${1:?butuh path tarball}"
-SMOKE_HOST="${2:-finance.rswicentral.my.id}"
+APP_DIR="${2:?butuh nama folder app, mis. finance.rswicentral.my.id}"
+
+BASE="$HOME/$APP_DIR"
+APPROOT="$BASE/app"
+SMOKE_HOST="$APP_DIR"
 KEEP=3
 
 log() { printf '\n==> %s\n' "$*"; }
-
-smoke() {
-    curl -k -sS -m 45 --resolve "$SMOKE_HOST:443:127.0.0.1" \
-        "https://$SMOKE_HOST/" 2>/dev/null || true
-}
 
 restore() {
     log "ROLLBACK ke rilis sebelumnya"
@@ -59,15 +58,14 @@ mv "$BASE/app.new" "$APPROOT"
 log "Restart Passenger"
 touch "$APPROOT/tmp/restart.txt"
 cloudlinux-selector restart --json --interpreter nodejs \
-    --app-root finance.agann.my.id/app >/dev/null 2>&1 || true
+    --app-root "$APP_DIR/app" >/dev/null 2>&1 || true
 
 log "Smoke test: https://$SMOKE_HOST/"
 BODY=""
-for attempt in 1 2 3 4 5 6 7 8; do
-    BODY="$(smoke)"
-    case "$BODY" in
-        *'/_next/'*) break ;;
-    esac
+for _ in 1 2 3 4 5 6 7 8; do
+    BODY="$(curl -k -sS -m 45 --resolve "$SMOKE_HOST:443:127.0.0.1" \
+        "https://$SMOKE_HOST/" 2>/dev/null || true)"
+    case "$BODY" in *'/_next/'*) break ;; esac
     sleep 5
 done
 printf 'panjang body: %s bytes\n' "${#BODY}"

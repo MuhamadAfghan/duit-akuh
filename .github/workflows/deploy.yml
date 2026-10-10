@@ -52,10 +52,10 @@ jobs:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_PORT: ${{ secrets.SSH_PORT }}
       SSH_USER: ${{ secrets.SSH_USER }}
+      # Each deployment directory under $HOME is named after the domain it
+      # serves, so one value is both the path and the smoke-test host.
       WEB_HOST: ${{ vars.WEB_HOST }}
       API_HOST: ${{ vars.API_HOST }}
-      WEB_DIR: ${{ vars.WEB_DIR }}
-      API_DIR: ${{ vars.API_DIR }}
 
     steps:
       - uses: actions/checkout@v4
@@ -123,13 +123,13 @@ jobs:
       - name: Kirim artifact
         run: |
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
-              "$SSH_USER@$SSH_HOST" "mkdir -p ~/$API_DIR/releases ~/$WEB_DIR/releases"
+              "$SSH_USER@$SSH_HOST" "mkdir -p ~/$API_HOST/releases ~/$WEB_HOST/releases"
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
               /tmp/release-api.tar.gz \
-              "$SSH_USER@$SSH_HOST:~/$API_DIR/releases/api-${{ github.sha }}.tar.gz"
+              "$SSH_USER@$SSH_HOST:~/$API_HOST/releases/api-${{ github.sha }}.tar.gz"
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
               /tmp/release-web.tar.gz \
-              "$SSH_USER@$SSH_HOST:~/$WEB_DIR/releases/web-${{ github.sha }}.tar.gz"
+              "$SSH_USER@$SSH_HOST:~/$WEB_HOST/releases/web-${{ github.sha }}.tar.gz"
 
       # Backend first: the frontend proxies /api/* to it, so a frontend
       # that went live against a failed backend would serve a broken app.
@@ -137,14 +137,14 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
               "$SSH_USER@$SSH_HOST" 'bash -s' -- \
-              "/home/$SSH_USER/$API_DIR/releases/api-${{ github.sha }}.tar.gz" "$API_HOST" \
+              "/home/$SSH_USER/$API_HOST/releases/api-${{ github.sha }}.tar.gz" "$API_HOST" \
               < deploy/activate-api.sh
 
       - name: Aktifkan frontend
         run: |
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
               "$SSH_USER@$SSH_HOST" 'bash -s' -- \
-              "/home/$SSH_USER/$WEB_DIR/releases/web-${{ github.sha }}.tar.gz" "$WEB_HOST" \
+              "/home/$SSH_USER/$WEB_HOST/releases/web-${{ github.sha }}.tar.gz" "$WEB_HOST" \
               < deploy/activate-web.sh
 
       - name: Bersihkan kunci

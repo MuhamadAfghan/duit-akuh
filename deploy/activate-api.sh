@@ -2,15 +2,19 @@
 #
 # Activates a backend release. Runs ON the cPanel server, piped from the
 # runner:
-#   ssh host 'bash -s' -- <tarball> [smoke-host] < deploy/activate-api.sh
+#   ssh host 'bash -s' -- <tarball> <app-dir> < deploy/activate-api.sh
+#
+# <app-dir> is the directory under $HOME that holds the deployment, and is
+# named after the domain it serves (e.g. api-finance.rswicentral.my.id),
+# which is also what the smoke test probes.
 #
 # Host notes (verified on heroic.jagoanhosting.id, re-check before changing):
 #   - rsync is NOT installed      -> transfer is tar + scp
-#   - no PostgreSQL on the server -> DATABASE_URL points somewhere external
-#   - Passenger app root is FIXED at <base>/app. The CloudLinux selector
+#   - no PostgreSQL on the server -> DATABASE_URL points at the local MariaDB
+#   - Passenger's app root is FIXED at <base>/app. The CloudLinux selector
 #     resolves symlinks when it writes .htaccess, so a `current -> releases/rX`
-#     symlink would bake the release name into the config. Releases are
-#     therefore swapped by moving directories, not by re-pointing a symlink.
+#     symlink would bake the release name into the config and into the
+#     virtualenv path. Releases are therefore swapped by moving directories.
 #   - Restart is `touch tmp/restart.txt`; the selector CLI is a fallback.
 #   - Smoke tests go over loopback TLS with --resolve, because the public
 #     edge answers non-browser clients with an Imunify360 interstitial that
@@ -18,19 +22,16 @@
 #     the app was down, so the body is matched too.
 set -euo pipefail
 
-BASE=/home/rswicent/api-finance.agann.my.id
-APPROOT="$BASE/app"
-VENV=/home/rswicent/virtualenv/api-finance.agann.my.id/app/3.11
 INCOMING="${1:?butuh path tarball}"
-SMOKE_HOST="${2:-api-finance.rswicentral.my.id}"
+APP_DIR="${2:?butuh nama folder app, mis. api-finance.rswicentral.my.id}"
+
+BASE="$HOME/$APP_DIR"
+APPROOT="$BASE/app"
+VENV="$HOME/virtualenv/$APP_DIR/app/3.11"
+SMOKE_HOST="$APP_DIR"
 KEEP=3
 
 log() { printf '\n==> %s\n' "$*"; }
-
-smoke() {
-    curl -k -sS -m 45 --resolve "$SMOKE_HOST:443:127.0.0.1" \
-        "https://$SMOKE_HOST/health" 2>/dev/null || true
-}
 
 restore() {
     log "ROLLBACK ke rilis sebelumnya"
@@ -74,15 +75,14 @@ mv "$BASE/app.new" "$APPROOT"
 log "Restart Passenger"
 touch "$APPROOT/tmp/restart.txt"
 cloudlinux-selector restart --json --interpreter python \
-    --app-root api-finance.agann.my.id/app >/dev/null 2>&1 || true
+    --app-root "$APP_DIR/app" >/dev/null 2>&1 || true
 
 log "Smoke test: https://$SMOKE_HOST/health"
 BODY=""
-for attempt in 1 2 3 4 5 6; do
-    BODY="$(smoke)"
-    case "$BODY" in
-        *'"status":"ok"'*) break ;;
-    esac
+for _ in 1 2 3 4 5 6; do
+    BODY="$(curl -k -sS -m 45 --resolve "$SMOKE_HOST:443:127.0.0.1" \
+        "https://$SMOKE_HOST/health" 2>/dev/null || true)"
+    case "$BODY" in *'"status":"ok"'*) break ;; esac
     sleep 5
 done
 printf '%s\n' "${BODY:0:300}"
