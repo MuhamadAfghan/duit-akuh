@@ -30,16 +30,29 @@ raises instead of quietly rounding (FR03).
 app/
   money.py            integer-rupiah guards
   models.py           SQLAlchemy schema; the sign convention is documented here
+  config.py  db.py    settings from the environment, engine and session
+  main.py             FastAPI app, routers, the DomainError -> 422 handler
   domain/             PURE rules, no database - this is where correctness lives
     ledger.py         entry builders, one per event in FR02
     balances.py       FR09 indicators (liquid, net worth, free-to-spend)
     allocations.py    the AC05 "allocations must fit the balance" rule
+    goals.py          ceiling division, progress, priority splitting
+    budgets.py        limits, overspend, netting
+    periods.py        "bulan ini" resolved in the user's timezone
+    capacity.py       cash-flow projection (FR10)
+    simulation.py     interest and saving plans - uses Fraction, not float
     errors.py         business-rule violations, mapped to 422 by the API
   services/           persistence: idempotency, ownership checks, atomicity
-  main.py             FastAPI app
+    posting.py drafts.py accounts.py reporting.py export.py …
+    chat/             orchestrator.py tools.py dispatch.py confirm.py
+    ai/               base.py openai_compat.py fake.py limits.py
+  api/                routes_*.py, schemas.py, deps.py (the only auth gate)
+alembic/versions/     checked-in migrations; downgrades drop their ENUMs
+benchmarks/           103-message Indonesian corpus, runner and watcher
 tests/
   test_acceptance_criteria.py   the PRD's ACs as tests - no database needed
   test_posting_integration.py   idempotency, atomicity, isolation - needs PostgreSQL
+  test_auth.py test_chat.py test_goals.py test_budgets.py test_simulation.py …
 ```
 
 `domain/` is pure on purpose: the money rules are the part that has to be
@@ -60,26 +73,58 @@ Requires Python 3.11+ (developed on 3.12).
 
 ## Database
 
+PostgreSQL 17, either one installed on the machine (what this is
+developed against, port 5432) or the bundled container (port **5433**, so
+it cannot clash with a local install):
+
 ```sh
-docker compose up -d db          # PostgreSQL 17 on port 5433
+docker compose up -d db
 ```
 
-Port 5433 avoids clashing with a PostgreSQL installed directly on the
-machine. Point `DATABASE_URL` elsewhere if you already have one.
+Either way the service needs a **non-superuser** role and two databases —
+one for development, one the test suite drops and recreates tables in.
+`setup-db.sql` does that, but it is generated per machine and gitignored,
+so recreate it rather than looking for it in git:
 
-Then create the initial migration (once, against a live database) and
-apply it:
+```sql
+CREATE ROLE duitakuh WITH LOGIN PASSWORD '<generate one>';
+CREATE DATABASE duitakuh OWNER duitakuh;
+CREATE DATABASE duitakuh_test OWNER duitakuh;
+```
 
 ```sh
-.venv/Scripts/alembic revision --autogenerate -m "initial schema"
+psql -h 127.0.0.1 -U postgres -f setup-db.sql   # as a superuser
+```
+
+Then apply the migrations. They are checked in — do not autogenerate the
+initial one again:
+
+```sh
 .venv/Scripts/alembic upgrade head
 ```
+
+Downgrades work as well as upgrades, which took an extra step: Alembic
+does not drop an ENUM type it created, so a downgrade left the type
+behind and the next upgrade failed. Each downgrade drops its own types.
+
+## Running it
+
+```sh
+.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+```
+
+`GET /health` answers without touching the database — a health check that
+fails on a slow query causes restart loops under load.
+
+The browser never calls this port directly. It calls `/api/*` on the
+Next.js origin, which proxies here, because the session cookie is
+`SameSite=Lax` and would not survive a cross-origin call.
 
 ## Tests
 
 ```sh
-.venv/Scripts/python -m pytest                      # 90 tests
-.venv/Scripts/python -m pytest -m "not integration" # 38, pure rules, no database
+.venv/Scripts/python -m pytest                      # 354 tests
+.venv/Scripts/python -m pytest -m "not integration" # pure rules, no database
 ```
 
 The integration tests **skip** rather than fail when `TEST_DATABASE_URL`
@@ -130,6 +175,7 @@ request needs the same care.
 
 | Method | Path                                   | Notes                                           |
 | ------ | -------------------------------------- | ----------------------------------------------- |
+| GET    | `/health`                              | Touches no database, by design                  |
 | POST   | `/auth/register` `/auth/login`         | Sets the session cookie                         |
 | POST   | `/auth/logout` `/auth/change-password` | Both revoke sessions                            |
 | GET    | `/auth/me`                             |                                                 |
@@ -141,6 +187,21 @@ request needs the same care.
 | POST   | `/transactions`                        | Requires `Idempotency-Key`                      |
 | GET    | `/transactions`                        |                                                 |
 | POST   | `/transactions/{id}/reverse`           | Posts the mirror image; deletes nothing         |
+| GET    | `/chat/messages`                       | The thread, oldest first                        |
+| POST   | `/chat/messages`                       | One complete turn                               |
+| POST   | `/chat/messages/stream`                | The same turn as NDJSON                         |
+| POST   | `/chat/drafts/{id}/confirm`            | **The only way anything is posted**             |
+| POST   | `/chat/drafts/{id}/cancel`             |                                                 |
+| GET    | `/reports/spending`                    | `?period=bulan_ini`, by category                |
+| GET    | `/goals` `/goals/{id}`                 |                                                 |
+| POST   | `/goals`                               |                                                 |
+| GET    | `/goals/{id}/plan`                     | `?capacity=…` — the FR11 options                |
+| POST   | `/goals/{id}/allocations`              | Earmark, `/release` and `/move` alongside       |
+| GET    | `/budgets`                             | Limits, spent, remaining, breaches              |
+| DELETE | `/budgets`                             | Removes one category's limit                    |
+| POST   | `/simulations/deposit` `/saving`       | Stateless (AC07)                                |
+| GET    | `/simulations/capacity`                | Cash-flow projection, not a spending report     |
+| GET    | `/export/transactions.csv`             | Streamed, one row per **entry** (AC10)          |
 
 Two things are load-bearing:
 
@@ -165,7 +226,7 @@ is rejected — accepting it invites `35000.4` next.
 
 One turn: the user's message plus a recent window of the thread goes to
 the model with the tool list; tool calls are executed; results are fed
-back; the reply and any drafts are stored. Bounded at 3 model rounds —
+back; the reply and any drafts are stored. Bounded at **5 model rounds** —
 each is another call on a shared GPU, and an unbounded loop could not
 finish inside Cloudflare's window anyway.
 
@@ -176,10 +237,19 @@ again, so what the card showed is what gets written. The draft's
 `operation_id` is the idempotency key, which makes a double tap or a
 stale card harmless (AC04/AC13).
 
-Only tools with a working backend are exposed. `run_simulation`,
-`propose_goal`, `propose_allocation` and `propose_budget` from the PRD's
-table are deliberately absent — a tool the model can call but the server
-cannot fulfil teaches it to promise things that fail.
+Thirteen tools are exposed, and **only tools with a working backend**:
+a tool the model can call but the server cannot fulfil teaches it to
+promise things that fail.
+
+| Reads, no confirmation                                                                                     | Drafts, always confirmed                                                                                                  |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `get_accounts` `get_summary` `get_spending` `get_goals` `get_budgets` `find_transactions` `run_simulation` | `propose_transactions` `propose_account_change` `propose_goal` `propose_allocation` `propose_budget` `propose_correction` |
+
+`build_system_prompt` injects today's date, the weekday, the timezone and
+**the user's actual wallet list** into every turn. Both halves were
+earned: without the date the model dated "kemarin" to 2023, and without
+the wallet list it invented names like `credit_card` and every card case
+in the benchmark failed.
 
 Model output is **untrusted data, not instruction**. The dispatcher
 re-validates every field, re-resolves account names through the same
@@ -308,7 +378,7 @@ one, so replacing one is visible before it is confirmed.
 
 ## Simulation (FR10–FR12, AC07)
 
-`POST /simulations/deposit`, `/saving`, and `GET /capacity`. Stateless:
+`POST /simulations/deposit`, `/saving`, and `GET /simulations/capacity`. Stateless:
 a simulation changes nothing until the user applies the plan, and a test
 asserts the ledger is byte-identical afterwards.
 
@@ -427,6 +497,18 @@ measures the two figures the PRD gates the pilot on: ≥90% of drafts
 correct on amount, wallet, date and type, and a draft-response p95 under
 ten seconds. See `benchmarks/README.md`.
 
+```sh
+.venv/Scripts/python -m benchmarks.run     # ~10 minutes against the real model
+.venv/Scripts/python -m benchmarks.watch   # live progress, another terminal
+```
+
+Latest full run: **93/103 (90.3%), p50 4.16s, p95 6.50s** — both gates
+pass, against 76.7% and 12.14s on the first run. The gap was two real
+defects, not tuning: the model was never told which wallets the user
+had, so it invented names; and spending on a credit card was classified
+as paying the card's bill, which would have kept the purchase out of
+every report and budget.
+
 It is not part of `pytest`: it costs GPU time on a shared box and needs
 a real `LLM_API_KEY`, and the suite must stay runnable without a model.
 
@@ -436,7 +518,8 @@ a real `LLM_API_KEY`, and the suite must stay runnable without a model.
   so `remaining_deposits` is supplied by the caller rather than derived.
 - **Voice and receipt OCR** (stage 2). The adapter has `vision` and
   `transcribe` in its interface but no implementation.
-- **Per-user rate limiting and a queue.** `lumi-ai` allows 16 parallel
-  requests shared with other apps; nothing enforces a share yet.
-- **Streaming to the browser.** The adapter streams from vLLM, but
-  `/chat/messages` returns one complete turn.
+- **Automatic benchmark runs.** `benchmarks/` is run by hand; nothing
+  gates a commit on it, because CI has no route to the model.
+- **A shared concurrency counter.** The app-wide gate is per process, so
+  several uvicorn workers would each get their own six. Correct for the
+  pilot's single worker; a shared counter would need Redis.

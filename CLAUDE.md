@@ -179,12 +179,12 @@ Path alias: `src/...` resolves from the repo root via `jsconfig.json` `baseUrl: 
 
 ## Current state vs. the PRD
 
-The repo is currently **frontend scaffolding only** — a themed Next.js shell. Nothing in the PRD's domain is implemented yet.
+The MVP is largely built: a double-entry ledger, auth, the chat orchestrator with 13 tools, goals, budgets, simulations, CSV export, and a PWA shell wired to all of it. The root [`README.md`](README.md) has the setup and usage guide; the remaining gaps are listed below.
 
 Stack decisions already made (2026-10-10):
 
 - **Backend: FastAPI + PostgreSQL**, per the PRD's recommendation — a separate service in `backend/`. The ledger foundation exists; see `backend/README.md`.
-- **Auth: own email + password** (needs argon2/bcrypt hashing plus login attempt rate limiting per §9). The template's sign-in/sign-up views exist and can be reused.
+- **Auth: own email + password**, Argon2id with server-side sessions in an httpOnly cookie and the §9 login throttle. Built; see `backend/README.md`.
 - **AI: the self-hosted `lumi-ai` service** described above, behind a swappable adapter.
 
 The PWA talks to the backend through a **same-origin proxy**: the browser
@@ -204,13 +204,11 @@ Built so far — the chat-first shell:
 
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
-- **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
 - **Deposit schedules.** Goals carry a target date but no deposit dates, so `remaining_deposits` is supplied by the caller rather than derived.
 - **Benchmark runs are manual.** `backend/benchmarks/` measures the PRD's pilot gates against the real model; nothing runs it automatically.
-- **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
 - **The frontend has no test runner.** The backend has pytest covering AC01–AC05 and AC08; nothing covers the React side.
-- **The chat thread does not survive navigation.** `ChatView` holds messages in local `useState`, so switching to Ringkasan and back empties the conversation. The PRD wants one thread that continues across sessions and devices (FR15), which only the backend can provide — do not paper over this with client storage; it is the orchestrator's job.
+- **Physical device testing is not done** (AC15–AC18). The shell is built to the mobile mandate but has only been seen in a desktop browser at phone widths.
 - **Install prompt UI is missing** (FR16 wants a button where available, plus iOS Share → Add to Home Screen guidance).
 - **`/dashboard/*` still exists** from the template. It is dead weight under the new IA and should be deleted once nothing is being cribbed from it.
 - `src/sections/blank/` is likewise leftover template scaffolding.
@@ -229,8 +227,8 @@ the essentials:
 
 ```sh
 cd backend
-.venv/Scripts/python -m pytest                       # 58 tests
-.venv/Scripts/python -m pytest -m "not integration"  # 38, no database needed
+.venv/Scripts/python -m pytest                       # 354 tests
+.venv/Scripts/python -m pytest -m "not integration"  # pure rules, no database
 .venv/Scripts/python -m ruff check .
 .venv/Scripts/alembic upgrade head
 ```

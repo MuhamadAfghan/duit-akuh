@@ -40,11 +40,11 @@ Case("amt-01", "makan 35rb pakai BCA", "draft", "expense", 35_000, "BCA", date="
 
 `expect` is one of:
 
-| Value    | Meaning                                                              |
-| -------- | -------------------------------------------------------------------- |
-| `draft`  | A draft must be raised, with the stated fields                        |
-| `none`   | No draft — questions, simulations, greetings                          |
-| `refuse` | No draft, and guessing would be wrong: ambiguous wallet, no amount    |
+| Value    | Meaning                                                            |
+| -------- | ------------------------------------------------------------------ |
+| `draft`  | A draft must be raised, with the stated fields                     |
+| `none`   | No draft — questions, simulations, greetings                       |
+| `refuse` | No draft, and guessing would be wrong: ambiguous wallet, no amount |
 
 Fields left `None` are not checked, so a case can pin the amount without
 pinning a category the PRD never specified.
@@ -54,13 +54,13 @@ pinning a category the PRD never specified.
 Every case runs against a **fresh user** with the same five wallets, so
 no case can affect the next, and all of them are deleted at the end:
 
-| Wallet  | Type        | Alias     | Balance                |
-| ------- | ----------- | --------- | ---------------------- |
-| BCA     | bank        | `bca`     | 5,000,000              |
-| Mandiri | bank        | `mandiri` | 2,000,000              |
-| GoPay   | e-wallet    | `gopay`   | 200,000                |
-| Cash    | cash        | `cash`    | 150,000                |
-| CC BCA  | credit card | `cc`      | limit 10,000,000       |
+| Wallet  | Type        | Alias     | Balance          |
+| ------- | ----------- | --------- | ---------------- |
+| BCA     | bank        | `bca`     | 5,000,000        |
+| Mandiri | bank        | `mandiri` | 2,000,000        |
+| GoPay   | e-wallet    | `gopay`   | 200,000          |
+| Cash    | cash        | `cash`    | 150,000          |
+| CC BCA  | credit card | `cc`      | limit 10,000,000 |
 
 ## Reading the output
 
