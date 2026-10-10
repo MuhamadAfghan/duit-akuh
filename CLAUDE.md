@@ -198,7 +198,7 @@ Built so far — the chat-first shell (UI only, no real data):
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
-- **No HTTP money endpoints yet.** Authentication exists (`/auth/*`), but account and transaction endpoints are not written. They go on `deps.get_current_user`, which has no bypass by design (AC08).
+- **The chat orchestrator does not exist.** The API can create accounts and post transactions, but nothing calls `lumi-ai` and nothing turns a sentence into a draft.
 - **`src/sections/chat/stub-orchestrator.js` is a throwaway.** It fakes a draft from a crude regex so the card states can be exercised. Delete it when the orchestrator lands — the model must do the interpreting and the backend must compute every balance.
 - **`CONFIG.auth.skip` is temporarily `true`** so the UI is reachable without the vendor demo API. Must return to `false` before any real data exists.
 - **The frontend still points at the vendor demo API** for auth and must be switched to `backend/`'s `/auth/*`.

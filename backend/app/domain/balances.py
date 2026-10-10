@@ -127,3 +127,55 @@ def category_total(
         return -sum(a.balance for a in accounts if a.kind is AccountKind.INCOME)
 
     raise ValueError(f"category_total hanya untuk INCOME atau EXPENSE, bukan {kind}")
+
+
+@dataclass(frozen=True, slots=True)
+class ImpactRow:
+    """What one account's balance would become if a draft were posted."""
+
+    account_id: object
+    name: str
+    before: int
+    after: int
+
+    @property
+    def delta(self) -> int:
+        return self.after - self.before
+
+
+def impact_of(legs, accounts: list[AccountSnapshot]) -> list[ImpactRow]:
+    """Compute a draft's effect on balances without writing anything.
+
+    This is what the chat's confirmation card shows before the user
+    commits (FR05: every financial change must display its impact first).
+    It is pure, so the preview and the eventual posting cannot disagree
+    about arithmetic — they fold the same legs the same way.
+
+    Accounts not touched by the draft are omitted. System accounts are
+    included: a category's running total moving is part of the effect.
+    """
+    by_id = {a.id: a for a in accounts}
+
+    deltas: dict[object, int] = {}
+    order: list[object] = []
+
+    for leg in legs:
+        if leg.account_id not in deltas:
+            order.append(leg.account_id)
+        deltas[leg.account_id] = deltas.get(leg.account_id, 0) + leg.amount
+
+    rows = []
+
+    for account_id in order:
+        snapshot = by_id.get(account_id)
+        before = snapshot.balance if snapshot else 0
+        rows.append(
+            ImpactRow(
+                account_id=account_id,
+                name=snapshot.name if snapshot else "(tidak dikenal)",
+                before=before,
+                after=before + deltas[account_id],
+            )
+        )
+
+    return rows

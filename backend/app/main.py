@@ -1,10 +1,9 @@
 """FastAPI application.
 
-Authentication is in place; money endpoints go on top of
-``deps.get_current_user``, which has no bypass by design (AC08).
+Every money endpoint goes through ``deps.get_current_user``, which has
+no bypass by design (AC08).
 
-Next: account and transaction endpoints, then the chat orchestrator that
-calls the lumi-ai service.
+Next: the chat orchestrator that calls the lumi-ai service.
 """
 
 from __future__ import annotations
@@ -14,7 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
+from .api.routes_accounts import router as accounts_router
 from .api.routes_auth import router as auth_router
+from .api.routes_transactions import router as transactions_router
 from .config import get_settings
 from .domain.errors import DomainError
 
@@ -51,6 +52,8 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
 
 
 app.include_router(auth_router)
+app.include_router(accounts_router)
+app.include_router(transactions_router)
 
 
 @app.get("/health", tags=["ops"])

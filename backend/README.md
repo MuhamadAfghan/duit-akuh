@@ -126,6 +126,39 @@ attempt before raising, and `test_throttling_actually_applies_over_http`
 guards it. Any future control that must persist across a _failed_
 request needs the same care.
 
+## Endpoints
+
+| Method | Path                                   | Notes                                           |
+| ------ | -------------------------------------- | ----------------------------------------------- |
+| POST   | `/auth/register` `/auth/login`         | Sets the session cookie                         |
+| POST   | `/auth/logout` `/auth/change-password` | Both revoke sessions                            |
+| GET    | `/auth/me`                             |                                                 |
+| GET    | `/accounts`                            | Wallets with balances; system accounts excluded |
+| POST   | `/accounts`                            | Optional opening balance, posted as equity      |
+| PATCH  | `/accounts/{id}`                       | Rename, alias, limit, archive. No delete (FR01) |
+| GET    | `/summary`                             | The FR09 indicators                             |
+| POST   | `/transactions/preview`                | Impact only — writes nothing                    |
+| POST   | `/transactions`                        | Requires `Idempotency-Key`                      |
+| GET    | `/transactions`                        |                                                 |
+| POST   | `/transactions/{id}/reverse`           | Posts the mirror image; deletes nothing         |
+
+Two things are load-bearing:
+
+**`Idempotency-Key` is mandatory on posting**, not best-effort. AC04
+requires a confirmation sent twice to produce exactly one transaction; a
+client that forgot the header would silently lose that guarantee, so a
+missing header is a 422. Replaying a key returns the original with
+`replayed: true`.
+
+**Preview and posting build legs through the same code path**
+(`services/drafts.py`), so the impact shown on the confirmation card
+cannot disagree with what gets written. `test_preview_matches_what_posting_actually_does`
+pins that.
+
+Amounts are `StrictInt` on the wire. Without it Pydantic would coerce
+`35000.4` to an int and round money away, so even a lossless `35000.0`
+is rejected — accepting it invites `35000.4` next.
+
 ## Not built yet
 
 - **The chat orchestrator** and the adapter for the self-hosted `lumi-ai`
