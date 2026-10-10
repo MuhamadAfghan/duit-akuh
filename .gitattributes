@@ -1,0 +1,17 @@
+# Enforce LF in the repo to match prettier's endOfLine: 'lf'.
+# Without this, Git's autocrlf rewrites checkouts to CRLF and `npm run fm:check` fails.
+* text=auto eol=lf
+
+# Binary assets - never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary
+*.docx binary
