@@ -586,3 +586,82 @@ def test_history_shows_that_tools_were_used(chat):
     )
 
     assert "propose_" in history, "history must show the draft came from a tool call"
+
+
+def test_the_model_is_told_todays_date(chat):
+    """Regression guard for a real mis-dating.
+
+    Asked to record "kemarin", the model emitted occurred_on 2023-10-25 —
+    three years off — because nothing in the prompt said what day it is.
+    It has no clock, so the date has to be supplied.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    chat.adapter.queue(text("Halo."))
+    send(chat, "halo")
+
+    system = chat.adapter.calls[-1]["messages"][0]
+    today = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y-%m-%d")
+
+    assert system["role"] == "system"
+    assert today in system["content"], "the prompt must carry today's date"
+    assert "Asia/Jakarta" in system["content"]
+
+
+def test_a_prose_only_draft_claim_triggers_one_retry(chat):
+    """The model sometimes says "draft sudah dibuat" without calling a tool.
+
+    Passing that through would tell the user their transaction was
+    recorded when nothing exists. One corrective round is given; if it
+    then calls the tool, the draft is real.
+    """
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    # Round 1: prose only, no tool call.
+    chat.adapter.queue(text("Draft transaksi pengeluaran 35.000 dari BCA sudah dibuat."))
+    # The nudge round: now it complies.
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 35_000, "from_account": "bca"}]},
+            content="Ini draftnya.",
+        )
+    )
+
+    result = send(chat, "makan 35rb pakai bca")
+
+    assert len(result["drafts"]) == 1
+    assert result["drafts"][0]["payload"]["amount"] == 35_000
+
+    nudge = chat.adapter.calls[-1]["messages"][-1]
+    assert nudge["role"] == "user"
+    assert "tidak memanggil tool" in nudge["content"]
+
+
+def test_a_persistent_prose_claim_is_replaced_with_an_honest_reply(chat):
+    """If it will not comply twice, say so rather than repeat the claim."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(text("Draft sudah dibuat dan tersimpan."))
+    chat.adapter.queue(text("Sudah saya catat kok."))
+
+    result = send(chat, "makan 35rb pakai bca")
+
+    assert result["drafts"] == []
+    assert "belum berhasil" in result["reply"]
+    assert "sudah dibuat" not in result["reply"].lower()
+    assert balances(chat)["BCA"] == 1_000_000
+
+
+def test_an_ordinary_answer_does_not_trigger_a_retry(chat):
+    """A reply with no draft claim must not cost an extra model round."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(tool("get_summary", {}))
+    chat.adapter.queue(text("Saldo likuidmu Rp1.000.000."))
+
+    result = send(chat, "saldo berapa")
+
+    assert len(chat.adapter.calls) == 2, "no corrective round for a normal answer"
+    assert "1.000.000" in result["reply"]

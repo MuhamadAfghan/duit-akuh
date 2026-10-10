@@ -187,7 +187,14 @@ Stack decisions already made (2026-10-10):
 - **Auth: own email + password** (needs argon2/bcrypt hashing plus login attempt rate limiting per §9). The template's sign-in/sign-up views exist and can be reused.
 - **AI: the self-hosted `lumi-ai` service** described above, behind a swappable adapter.
 
-Built so far — the chat-first shell (UI only, no real data):
+The PWA talks to the backend through a **same-origin proxy**: the browser
+calls `/api/*` and `next.config.mjs` rewrites it to FastAPI. That is not a
+convenience — the session is an httpOnly `SameSite=Lax` cookie, which a
+browser will not send cross-origin. Calling the backend directly would
+mean `SameSite=None; Secure` or putting the token in JavaScript. Client
+code lives in `src/lib/api.js`; there is no Bearer token anywhere.
+
+Built so far — the chat-first shell:
 
 - **Chat is the root route.** `src/app/(app)/` holds the three surfaces: `/` (chat), `/ringkasan`, `/data`, inside `AppShell`. The old `/` → `/dashboard` redirect is gone.
 - **`AppShell`** (`src/layouts/app/`) fills the dynamic viewport, scrolls only its content area, and compresses by the keyboard inset so the composer stays visible. `BottomTabs` hides while the keyboard is open.
@@ -198,10 +205,8 @@ Built so far — the chat-first shell (UI only, no real data):
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
-- **The frontend does not call the backend at all.** The orchestrator works (`/chat/messages`), but the Next.js chat is still driven by `stub-orchestrator.js`.
-- **`src/sections/chat/stub-orchestrator.js` is a throwaway.** It fakes a draft from a crude regex so the card states can be exercised. Delete it when the orchestrator lands — the model must do the interpreting and the backend must compute every balance.
-- **`CONFIG.auth.skip` is temporarily `true`** so the UI is reachable without the vendor demo API. Must return to `false` before any real data exists.
-- **The frontend still points at the vendor demo API** for auth and must be switched to `backend/`'s `/auth/*`.
+- **Period filtering.** `get_summary` and `find_transactions` have no date range, so FR06's "bulan ini makan berapa" can only be deflected, not answered.
+- **Goals, budgets and simulation** have tables and rules but no services, so their tools are withheld from the model.
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Chat is not streamed to the browser.** The backend adapter streams from vLLM (required: Cloudflare 524s past 100s), but `/chat/messages` returns one complete turn.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.

@@ -15,14 +15,8 @@ export const CONFIG = {
    * @method jwt | amplify | firebase | supabase | auth0
    */
   auth: {
-    method: 'jwt',
-    /**
-     * TEMPORARY: true while there is no backend, so the chat-first UI can
-     * be worked on without the vendor demo API redirecting to sign-in.
-     * MUST go back to false before any real data exists - every API is
-     * required to enforce per-owner authorization (AC08).
-     */
-    skip: true,
+    method: 'session',
+    skip: false,
     redirectPath: paths.chat,
   },
   /**

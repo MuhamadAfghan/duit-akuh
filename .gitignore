@@ -48,6 +48,7 @@ next-env.d.ts
 # Template reference (Minimal v7.7.0) - not part of the app
 _reference/
 dev.log
+*.log
 
 # Local scratch output from manual checks
 *.local.html

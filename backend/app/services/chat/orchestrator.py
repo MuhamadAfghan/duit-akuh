@@ -20,18 +20,21 @@ Three constraints from the PRD shape this:
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from ...models import AiRequestLog, Conversation, Draft, Message, MessageRole
+from ...models import AiRequestLog, Conversation, Draft, Message, MessageRole, User
 from ..ai.base import AiAdapter, AiError, ChatResult
 from .dispatch import dispatch
-from .tools import ALL_TOOLS, PROPOSE_TOOL_NAMES, SYSTEM_PROMPT
+from .tools import ALL_TOOLS, PROPOSE_TOOL_NAMES, build_system_prompt
 
 #: How many past turns to send. Enough for "the account I just
 #: mentioned" to resolve, small enough to leave room for tool results.
@@ -48,6 +51,41 @@ FAILURE_REPLY = (
     "Maaf, layanan AI sedang tidak bisa dihubungi. "
     "Transaksi tetap bisa dicatat manual lewat halaman Data."
 )
+
+#: Words the model uses when it believes it recorded something. Matched
+#: only to catch it claiming a draft it never created - see
+#: `_claims_a_draft`.
+_CLAIM_WORDS = re.compile(
+    r"\b(draft|tersimpan|disimpan|dicatat|saya catat|aku catat)\b",
+    re.IGNORECASE,
+)
+
+#: One corrective round when the model answered in prose instead of
+#: calling a tool. Bounded to a single retry: if it will not comply twice,
+#: the honest thing is to say so rather than keep burning GPU slots.
+_NUDGE = (
+    "Kamu menjawab seolah draft sudah dibuat, padahal kamu tidak memanggil "
+    "tool apa pun, jadi tidak ada draft dan pengguna tidak melihat kartu. "
+    "Panggil tool propose_* sekarang dengan data yang sama. Jangan menjawab "
+    "dengan teks saja."
+)
+
+HONEST_FALLBACK = (
+    "Maaf, aku belum berhasil membuat draftnya. Coba ulangi dengan menyebut "
+    'nominal dan kantongnya, misalnya: "makan 35rb pakai BCA".'
+)
+
+
+def _claims_a_draft(reply: str) -> bool:
+    """True when a reply sounds like something was drafted or saved.
+
+    Deliberately crude. It exists because the opposite failure is severe:
+    the model sometimes describes a draft in prose without calling a
+    tool, and the user is then told their transaction was recorded when
+    nothing exists. A false positive costs one extra model round; a false
+    negative misleads someone about their money.
+    """
+    return bool(_CLAIM_WORDS.search(reply))
 
 
 @dataclass
@@ -166,7 +204,19 @@ async def run_turn(
     )
     db.flush()
 
-    prompt: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # The model has no clock. Without today's date it dates "kemarin"
+    # from memory, which lands years off.
+    user_timezone = getattr(db.get(User, user_id), "timezone", None) or "Asia/Jakarta"
+
+    try:
+        now_local = datetime.now(ZoneInfo(user_timezone))
+    except ZoneInfoNotFoundError:
+        now_local = datetime.now(timezone.utc)
+        user_timezone = "UTC"
+
+    prompt: list[dict[str, Any]] = [
+        {"role": "system", "content": build_system_prompt(now_local, user_timezone)}
+    ]
     prompt += _as_prompt(recent_messages(db, conversation.id))
 
     drafts: list[Draft] = []
@@ -231,6 +281,14 @@ async def run_turn(
         # Ran out of rounds with the model still calling tools.
         reply = reply or "Aku belum berhasil menyelesaikan itu. Bisa diperjelas?"
 
+    # The model sometimes answers "Draft sudah dibuat" without having
+    # called a tool. Rather than pass that on, give it one chance to
+    # actually do it.
+    if not degraded and not drafts and _claims_a_draft(reply):
+        reply, drafts = await _retry_with_nudge(
+            db, user_id=user_id, adapter=adapter, prompt=prompt, previous_reply=reply
+        )
+
     if not reply and drafts:
         reply = "Ini draftnya. Periksa dulu, lalu konfirmasi kalau sudah benar."
 
@@ -260,6 +318,49 @@ async def run_turn(
     db.flush()
 
     return TurnResult(reply=reply, drafts=drafts, degraded=degraded)
+
+
+async def _retry_with_nudge(
+    db: DbSession,
+    *,
+    user_id: uuid.UUID,
+    adapter: AiAdapter,
+    prompt: list[dict[str, Any]],
+    previous_reply: str,
+) -> tuple[str, list[Draft]]:
+    """One corrective round after the model answered in prose.
+
+    Returns the reply and drafts to use. If the retry still produces
+    nothing, the reply says so plainly instead of repeating the model's
+    false claim.
+    """
+    retry_prompt = [
+        *prompt,
+        {"role": "assistant", "content": previous_reply},
+        {"role": "user", "content": _NUDGE},
+    ]
+    started = time.monotonic()
+
+    try:
+        result = await adapter.chat(messages=retry_prompt, tools=ALL_TOOLS)
+    except AiError as exc:
+        _log_ai(db, user_id=user_id, result=None, started=started, status="error", error=str(exc))
+        return HONEST_FALLBACK, []
+
+    _log_ai(db, user_id=user_id, result=result, started=started, status="ok")
+
+    drafts: list[Draft] = []
+
+    for call in result.tool_calls:
+        output = dispatch(db, user_id, call.name, call.arguments)
+
+        if call.name in PROPOSE_TOOL_NAMES and "error" not in output:
+            drafts.extend(_collect_drafts(db, user_id, output))
+
+    if drafts:
+        return (result.content.strip() or "Ini draftnya. Periksa dulu, lalu konfirmasi."), drafts
+
+    return HONEST_FALLBACK, []
 
 
 def _collect_drafts(db: DbSession, user_id: uuid.UUID, output: dict) -> list[Draft]:

@@ -21,6 +21,7 @@ shared with the conversation history, and verbose schemas eat it.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 #: Amounts are integers of rupiah everywhere. Said explicitly in each
@@ -174,7 +175,11 @@ READ_TOOL_NAMES = frozenset(t["function"]["name"] for t in READ_TOOLS)
 PROPOSE_TOOL_NAMES = frozenset(t["function"]["name"] for t in PROPOSE_TOOLS)
 
 
-SYSTEM_PROMPT = """Kamu asisten keuangan pribadi berbahasa Indonesia.
+SYSTEM_PROMPT_TEMPLATE = """Kamu asisten keuangan pribadi berbahasa Indonesia.
+
+Hari ini {today} ({weekday}), zona waktu {timezone}.
+Gunakan tanggal itu untuk menafsirkan "hari ini", "kemarin", "tadi pagi",
+"minggu lalu" dan sejenisnya. JANGAN menebak tanggal dari ingatanmu.
 
 ATURAN PALING PENTING:
 Draft HANYA ada jika kamu memanggil tool propose_*. Menulis draft sebagai
@@ -190,5 +195,24 @@ Aturan lain:
 - Membayar tagihan kartu kredit BUKAN pengeluaran baru.
 - Jika kantong tidak disebut atau namanya cocok dengan lebih dari satu, TANYA dulu. Jangan menebak.
 - Tool propose_* hanya membuat draft; pengguna yang mengonfirmasi. Jangan bilang sudah tersimpan.
+- Jika hanya ADA SATU kantong yang cocok dengan yang disebut pengguna, langsung
+  pakai kantong itu. Bertanya hanya jika benar-benar ada lebih dari satu.
 - Jawab ringkas, dalam bahasa Indonesia.
 """
+
+_WEEKDAYS = ("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu")
+
+
+def build_system_prompt(now: datetime, timezone_name: str = "Asia/Jakarta") -> str:
+    """Render the system prompt with today's date filled in.
+
+    Without this the model dates relative expressions from whatever it
+    remembers: asked to record "kemarin" it produced 2023-10-25, three
+    years off, which would file the transaction in the wrong period and
+    look plainly wrong in the list. It has no clock, so it has to be told.
+    """
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        today=now.strftime("%Y-%m-%d"),
+        weekday=_WEEKDAYS[now.weekday()],
+        timezone=timezone_name,
+    )
