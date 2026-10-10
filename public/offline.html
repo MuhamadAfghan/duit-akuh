@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Tidak ada koneksi</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1c252e;
+        --muted: #637381;
+        --brand: #00a76f;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141a21;
+          --fg: #ffffff;
+          --muted: #919eab;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.5 system-ui,
+          -apple-system,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        text-align: center;
+      }
+      .wrap {
+        max-width: 22rem;
+      }
+      img {
+        width: 72px;
+        height: 72px;
+        border-radius: 18px;
+      }
+      h1 {
+        margin: 24px 0 8px;
+        font-size: 1.25rem;
+      }
+      p {
+        margin: 0 0 24px;
+        color: var(--muted);
+      }
+      button {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 0 24px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--brand);
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <img src="/icons/icon-192.png" alt="" />
+      <h1>Tidak ada koneksi</h1>
+      <!--
+        States plainly that nothing was saved. The PRD forbids implying
+        success while offline, and posting always requires a connection.
+      -->
+      <p>
+        Pencatatan butuh koneksi, jadi tidak ada data yang tersimpan. Coba lagi setelah internet
+        kembali.
+      </p>
+      <button type="button" onclick="location.reload()">Coba lagi</button>
+    </div>
+  </body>
+</html>

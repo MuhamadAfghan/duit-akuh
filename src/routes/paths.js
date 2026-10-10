@@ -8,6 +8,13 @@ const ROOTS = {
 // ----------------------------------------------------------------------
 
 export const paths = {
+  /**
+   * The three app surfaces (PRD FR17 bottom tabs). Chat is the root: it is
+   * the main surface, not a sub-page (FR14).
+   */
+  chat: '/',
+  ringkasan: '/ringkasan',
+  data: '/data',
   faqs: '/faqs',
   minimalStore: 'https://mui.com/store/items/minimal-dashboard/',
   // AUTH

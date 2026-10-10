@@ -17,7 +17,8 @@
     "clean": "rm -rf node_modules .next out dist build",
     "re:dev": "yarn clean && yarn install && yarn dev",
     "re:build": "yarn clean && yarn install && yarn build",
-    "re:build-npm": "npm run clean && npm install && npm run build"
+    "re:build-npm": "npm run clean && npm install && npm run build",
+    "gen:icons": "node scripts/generate-icons.mjs"
   },
   "engines": {
     "node": ">=22.12.0"
