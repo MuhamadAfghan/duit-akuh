@@ -366,6 +366,33 @@ later, receipt OCR.
 The response is streamed; an export is unbounded by nature and the PRD
 targets 10,000 transactions per user.
 
+## Rate limiting and queueing (PRD section 13)
+
+`lumi-ai` allows 16 parallel requests **shared with other applications**
+and has no SLA, so three limits sit in front of it in
+`app/services/ai/limits.py`, each answering a different failure:
+
+| Limit                           | Refusal             | Why                                                                                   |
+| ------------------------------- | ------------------- | ------------------------------------------------------------------------------------- |
+| 20 messages per minute per user | 429 + `Retry-After` | One person cannot spend everyone's budget                                             |
+| One turn in flight per user     | 409                 | A second turn is a double tap, not a second question — queueing it would run it twice |
+| 6 concurrent calls, app-wide    | 503 + `Retry-After` | Leaves most of the shared 16 to the other services                                    |
+
+The rate limit counts rows in `ai_request_logs`, which is written for
+every call anyway. No extra table, it holds across worker processes, and
+it survives a restart. **Failed calls count too** — otherwise a retry
+loop is an unmetered way to hammer the GPU.
+
+The queue wait is capped at 20 seconds. Cloudflare drops a request whose
+response has not started within 100, so waiting longer produces a 524
+the user cannot interpret instead of a sentence they can. The busy
+message points at manual entry, as AC22 requires.
+
+The concurrency gate is per process: several uvicorn workers would each
+get their own. That is correct for the pilot's single worker, and the
+rate limit caps the damage either way; a shared counter would need
+Redis.
+
 ## Not built yet
 
 - **Deposit schedules.** Goals carry a target date but no deposit dates,

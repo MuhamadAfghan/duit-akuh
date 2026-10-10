@@ -14,6 +14,14 @@ from pydantic import BaseModel, Field
 from ..config import get_settings
 from ..models import Draft, DraftStatus
 from ..services.ai.base import AiAdapter
+from ..services.ai.limits import (
+    RATE_WINDOW,
+    AiBusy,
+    AiRateLimited,
+    AlreadyProcessing,
+    check_rate_limit,
+    gate,
+)
 from ..services.ai.openai_compat import OpenAiCompatAdapter
 from ..services.chat.confirm import DraftNotPending, cancel_draft, confirm_draft
 from ..services.chat.dispatch import pending_draft
@@ -126,7 +134,38 @@ def list_messages(user: CurrentUser, db: DbSessionDep) -> list[MessageOut]:
 
 @router.post("/messages", response_model=TurnOut)
 async def send_message(body: SendMessageIn, user: CurrentUser, db: DbSessionDep) -> TurnOut:
-    result = await run_turn(db, user_id=user.id, adapter=get_adapter(), body=body.body)
+    """Process one message.
+
+    Guarded by the limits in `services/ai/limits.py`: the AI server's 16
+    parallel slots are shared with other applications, so one user must
+    not be able to exhaust them.
+    """
+    try:
+        check_rate_limit(db, user.id)
+    except AiRateLimited as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": exc.code, "message": str(exc)},
+            # Standard, and it saves the client guessing: the window is
+            # a minute, so there is no point retrying sooner.
+            headers={"Retry-After": str(int(RATE_WINDOW.total_seconds()))},
+        ) from exc
+
+    try:
+        async with gate.slot(user.id):
+            result = await run_turn(db, user_id=user.id, adapter=get_adapter(), body=body.body)
+    except AlreadyProcessing as exc:
+        # 409, not 429: nothing is wrong with the rate, the previous
+        # turn simply has not finished.
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
+    except AiBusy as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+            headers={"Retry-After": "10"},
+        ) from exc
 
     return TurnOut(
         reply=result.reply,

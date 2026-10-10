@@ -107,10 +107,19 @@ export function ChatView() {
         await chatApi.send(body);
         await reload();
       } catch (error) {
+        // Each of these is a different thing the user can do next, so
+        // they are not collapsed into one "failed" message.
+        const BY_CODE = {
+          offline: 'Tidak ada koneksi. Pesan belum terkirim dan tidak ada yang tersimpan.',
+          ai_rate_limited:
+            'Terlalu banyak pesan dalam waktu singkat. Tunggu sebentar, lalu coba lagi.',
+          ai_busy:
+            'Layanan AI sedang penuh. Coba lagi sebentar lagi, atau catat manual lewat halaman Data.',
+          already_processing: 'Pesan sebelumnya masih diproses. Tunggu sebentar.',
+        };
+
         const message =
-          error instanceof ApiError && error.isOffline
-            ? 'Tidak ada koneksi. Pesan belum terkirim dan tidak ada yang tersimpan.'
-            : 'Gagal mengirim pesan. Coba lagi.';
+          (error instanceof ApiError && BY_CODE[error.code]) || 'Gagal mengirim pesan. Coba lagi.';
 
         setMessages((prev) => [...prev, { id: nextLocalId(), role: 'assistant', body: message }]);
         setStatus('');

@@ -60,9 +60,7 @@ def account(api, name="BCA", balance=5_000_000, type_="bank"):
 
 
 def post(api, body):
-    r = api.post(
-        "/transactions", headers={"Idempotency-Key": f"k-{uuid.uuid4()}"}, json=body
-    )
+    r = api.post("/transactions", headers={"Idempotency-Key": f"k-{uuid.uuid4()}"}, json=body)
     assert r.status_code == 201, r.text
     return r.json()
 

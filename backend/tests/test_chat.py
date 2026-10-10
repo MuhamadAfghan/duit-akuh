@@ -872,3 +872,76 @@ def test_a_failed_simulation_tells_the_model_not_to_compute_it_itself(chat):
     output = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
 
     assert "Jangan hitung sendiri" in output["content"]
+
+
+# ----------------------------------------------------------------------
+# Rate limiting and queueing (PRD section 13)
+# ----------------------------------------------------------------------
+
+
+def test_too_many_messages_are_rate_limited_with_a_retryable_status(chat):
+    from app.services.ai.limits import RATE_LIMIT
+
+    for _ in range(RATE_LIMIT + 2):
+        chat.adapter.queue(text("ok"))
+
+    codes = [
+        chat.post("/chat/messages", json={"body": "halo"}).status_code
+        for _ in range(RATE_LIMIT + 2)
+    ]
+
+    assert codes[0] == 200
+    assert 429 in codes, f"expected a limit after {RATE_LIMIT} messages, got {codes}"
+
+    blocked = chat.post("/chat/messages", json={"body": "halo"})
+    assert blocked.status_code == 429
+    assert blocked.json()["detail"]["code"] == "ai_rate_limited"
+    # Tells the client when to come back rather than making it guess.
+    assert blocked.headers["retry-after"] == "60"
+
+
+def test_a_busy_service_returns_503_with_retry_after(chat, monkeypatch):
+    """Cloudflare 524s past 100s, so waiting forever is not an option."""
+    from app.api import routes_chat
+    from app.services.ai.limits import AiGate
+
+    # One slot, already taken, and no patience.
+    busy = AiGate(max_concurrency=1, timeout=0.01)
+    monkeypatch.setattr(routes_chat, "gate", busy)
+
+    import asyncio
+
+    async def occupy():
+        async with busy.slot(uuid.uuid4()):
+            await asyncio.sleep(5)
+
+    loop = asyncio.new_event_loop()
+    task = loop.create_task(occupy())
+    loop.run_until_complete(asyncio.sleep(0.01))
+
+    try:
+        chat.adapter.queue(text("ok"))
+        response = chat.post("/chat/messages", json={"body": "halo"})
+
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "ai_busy"
+        assert response.headers["retry-after"] == "10"
+        # The message points at the manual path, as AC22 requires.
+        assert "manual" in response.json()["detail"]["message"].lower()
+    finally:
+        task.cancel()
+        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+        loop.close()
+
+
+def test_reads_are_not_rate_limited(chat):
+    """Only the AI path is scarce; reading the thread is not."""
+    from app.services.ai.limits import RATE_LIMIT
+
+    for _ in range(RATE_LIMIT + 2):
+        chat.adapter.queue(text("ok"))
+    for _ in range(RATE_LIMIT + 2):
+        chat.post("/chat/messages", json={"body": "halo"})
+
+    assert chat.get("/chat/messages").status_code == 200
+    assert chat.get("/summary").status_code == 200
