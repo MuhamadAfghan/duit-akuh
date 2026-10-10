@@ -451,13 +451,15 @@ def test_an_unknown_tool_does_not_crash_the_turn(chat):
 def test_a_model_that_never_stops_calling_tools_is_cut_off(chat):
     make_account(chat, "BCA", balance=1_000_000, alias="bca")
 
-    for _ in range(10):
+    from app.services.chat.orchestrator import MAX_TOOL_ROUNDS
+
+    for _ in range(MAX_TOOL_ROUNDS + 5):
         chat.adapter.queue(tool("get_summary", {}))
 
     result = send(chat, "loop please")
 
     # Bounded: it stopped rather than holding a GPU slot forever.
-    assert len(chat.adapter.calls) <= 3
+    assert len(chat.adapter.calls) == MAX_TOOL_ROUNDS
     assert result["reply"]
 
 
@@ -554,3 +556,33 @@ def test_an_outage_is_logged_as_an_error(chat, engine):
         assert log.status == "error"
         assert "GPU penuh" in log.error
         assert log.latency_ms is not None
+
+
+def test_history_shows_that_tools_were_used(chat):
+    """Regression guard for a failure seen against the real model.
+
+    History used to contain only the assistant's prose. With no evidence
+    that tools were ever called, the model copied the pattern: it replied
+    "Draft transaksi: ..." in text without calling propose_*, so the user
+    got a message claiming a draft that did not exist. Card turns now say
+    explicitly that a tool produced them.
+    """
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 35_000, "from_account": "bca"}]},
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+    send(chat, "makan 35rb pakai bca")
+
+    chat.adapter.queue(text("Baik."))
+    send(chat, "pesan berikutnya")
+
+    history = " ".join(
+        m["content"] or "" for m in chat.adapter.calls[-1]["messages"] if m["role"] == "assistant"
+    )
+
+    assert "propose_" in history, "history must show the draft came from a tool call"

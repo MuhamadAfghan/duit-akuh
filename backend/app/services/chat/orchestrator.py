@@ -37,10 +37,12 @@ from .tools import ALL_TOOLS, PROPOSE_TOOL_NAMES, SYSTEM_PROMPT
 #: mentioned" to resolve, small enough to leave room for tool results.
 HISTORY_LIMIT = 20
 
-#: Tool rounds per user message. Two covers the common
-#: find_transactions -> propose_correction chain; more suggests the
-#: model is looping.
-MAX_TOOL_ROUNDS = 3
+#: Tool rounds per user message. Observed live, a single "top up X from
+#: Y" needs three: get_accounts, propose_transactions, then the reply —
+#: so three was exactly the ceiling and anything needing one more lookup
+#: was being cut off. Five leaves headroom while still bounding how long
+#: a turn can hold a slot on the shared GPU.
+MAX_TOOL_ROUNDS = 5
 
 FAILURE_REPLY = (
     "Maaf, layanan AI sedang tidak bisa dihubungi. "
@@ -86,17 +88,27 @@ def recent_messages(
 def _as_prompt(messages: list[Message]) -> list[dict[str, Any]]:
     """Render stored turns for the model.
 
-    Card turns carry no prose, so they are described rather than sent
-    empty — otherwise the model loses track of what it already proposed.
+    Card turns are rendered as an explicit statement that a tool was
+    called. Without that the history contains only prose replies, and
+    the model copies the pattern — answering "Draft transaksi: ..." in
+    text without ever calling propose_*, so the user sees a reply
+    claiming a draft that does not exist. Observed against the real
+    model; `test_history_shows_that_tools_were_used` guards it.
     """
-    rendered = []
+    rendered: list[dict[str, Any]] = []
 
     for message in messages:
         if message.body:
             rendered.append({"role": message.role.value, "content": message.body})
         elif message.draft_id:
             rendered.append(
-                {"role": "assistant", "content": "[kartu draft menunggu konfirmasi pengguna]"}
+                {
+                    "role": "assistant",
+                    "content": (
+                        "[Aku memanggil tool propose_* dan kartu draft tampil. "
+                        "Draft hanya muncul lewat tool, bukan lewat teks.]"
+                    ),
+                }
             )
 
     return rendered

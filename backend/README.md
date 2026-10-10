@@ -199,8 +199,37 @@ An outage degrades rather than failing — the reply becomes a plain
 message pointing at manual entry, and the user's text is still saved
 (AC09/AC22).
 
+### Verified against the real model
+
+Connected to `lumi-ai` (`qwen3.5-9b`, `max_model_len` 24576) on
+2026-10-10. Round-trip latency 1.5-4.5s per model round. Indonesian
+informal amounts parse correctly: "35rb" -> 35000, "100 ribu" ->
+100000, "kemarin" sets the date.
+
+Two problems showed up only with the real model, both now fixed:
+
+**The model stopped calling tools after a few turns.** History contained
+only its prose replies, with no evidence that tools had ever been
+used, so it copied the pattern — replying "Draft transaksi: ..." in
+text while creating no draft at all. The user saw a message claiming a
+draft that did not exist. Card turns in history now state explicitly
+that a tool produced them, and the system prompt leads with the rule.
+In isolation the same message had always worked, which is why only a
+multi-turn test caught it.
+
+**Three tool rounds was exactly the ceiling.** A plain "top up X from Y"
+uses get_accounts, then propose_transactions, then the reply. Anything
+needing one more lookup was silently cut off. Now five.
+
+Also tightened: `get_summary` returns all-time totals with no period
+filter, and the model was labelling them "bulan ini". The tool
+description now says so, and the model answers honestly instead.
+
 ## Not built yet
 
+- **Period filtering.** `get_summary` and `find_transactions` have no
+  date range, so "bulan ini makan berapa" (FR06) cannot be answered
+  properly yet — only deflected.
 - **Goals, budgets, simulation.** The `Goal` and `Allocation` tables and the
   allocation rule exist; the services on top do not. Their tools are
   withheld from the model until they do.

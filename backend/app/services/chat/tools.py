@@ -43,8 +43,10 @@ READ_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "get_summary",
             "description": (
-                "Ringkasan: saldo likuid, aset bersih, total utang, "
-                "uang bebas pakai, total pengeluaran dan pemasukan."
+                "Ringkasan: saldo likuid, aset bersih, total utang, uang bebas pakai, "
+                "serta total pengeluaran dan pemasukan SEJAK AWAL (bukan per bulan). "
+                "Belum ada penyaringan periode, jadi jangan sebut angkanya sebagai "
+                "'bulan ini' atau periode lain; katakan itu total keseluruhan."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -54,8 +56,9 @@ READ_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "find_transactions",
             "description": (
-                "Cari transaksi terbaru. Gunakan untuk menjawab pertanyaan "
-                "atau menemukan transaksi yang ingin dikoreksi."
+                "Daftar transaksi TERBARU (bukan hasil pencarian per kata kunci "
+                "atau periode). Gunakan untuk menjawab pertanyaan atau menemukan "
+                "transaksi yang ingin dikoreksi."
             ),
             "parameters": {
                 "type": "object",
@@ -173,7 +176,14 @@ PROPOSE_TOOL_NAMES = frozenset(t["function"]["name"] for t in PROPOSE_TOOLS)
 
 SYSTEM_PROMPT = """Kamu asisten keuangan pribadi berbahasa Indonesia.
 
-Aturan:
+ATURAN PALING PENTING:
+Draft HANYA ada jika kamu memanggil tool propose_*. Menulis draft sebagai
+teks TIDAK membuat draft apa pun - pengguna tidak akan melihat kartu dan
+tidak bisa mengonfirmasi. Jadi untuk setiap permintaan mencatat,
+mengubah, atau membatalkan, panggil tool-nya. Jangan pernah menjelaskan
+draft dalam kalimat tanpa memanggil tool lebih dulu.
+
+Aturan lain:
 - Semua nominal adalah rupiah bulat (integer). "35rb" = 35000, "1,5 juta" = 1500000.
 - JANGAN pernah menghitung atau menyebut saldo sendiri. Panggil tool untuk angka apa pun.
 - Transfer, top-up dan tarik tunai BUKAN pemasukan atau pengeluaran.
