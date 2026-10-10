@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import httpx
@@ -98,6 +98,7 @@ class OpenAiCompatAdapter:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         json_object: bool = False,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ChatResult:
         payload = self._payload(
             messages=messages,
@@ -113,7 +114,7 @@ class OpenAiCompatAdapter:
         started = time.monotonic()
 
         try:
-            return await self._stream(client, payload)
+            return await self._stream(client, payload, on_delta)
         except httpx.TimeoutException as exc:
             raise AiTimeout(
                 f"Layanan AI tidak merespons dalam {time.monotonic() - started:.0f} detik"
@@ -124,7 +125,12 @@ class OpenAiCompatAdapter:
             if owns_client:
                 await client.aclose()
 
-    async def _stream(self, client: httpx.AsyncClient, payload: dict[str, Any]) -> ChatResult:
+    async def _stream(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> ChatResult:
         content_parts: list[str] = []
         # Tool calls arrive as deltas keyed by index, with the name in one
         # chunk and the arguments dribbled across later ones.
@@ -172,6 +178,9 @@ class OpenAiCompatAdapter:
 
                     if delta.get("content"):
                         content_parts.append(delta["content"])
+
+                        if on_delta is not None:
+                            on_delta(delta["content"])
 
                     for call in delta.get("tool_calls") or []:
                         _accumulate_tool_call(partial_tools, call)

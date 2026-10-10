@@ -21,6 +21,29 @@ const WELCOME = {
     'Coba: "kemarin makan 35rb pakai BCA"',
 };
 
+/**
+ * The in-progress assistant turn. A fixed id so each token replaces the
+ * same bubble instead of appending a new one.
+ */
+const STREAMING_ID = 'streaming';
+
+/** What to show while a tool runs, so the pause has a reason. */
+const TOOL_STATUS = {
+  get_accounts: 'Melihat kantong…',
+  get_summary: 'Menghitung saldo…',
+  get_spending: 'Menghitung pengeluaran…',
+  get_budgets: 'Memeriksa budget…',
+  get_goals: 'Memeriksa target…',
+  find_transactions: 'Mencari transaksi…',
+  run_simulation: 'Menghitung simulasi…',
+  propose_transactions: 'Menyusun draft…',
+  propose_account_change: 'Menyusun kantong baru…',
+  propose_correction: 'Menyusun pembatalan…',
+  propose_goal: 'Menyusun target…',
+  propose_allocation: 'Menyusun alokasi…',
+  propose_budget: 'Menyusun budget…',
+};
+
 let localId = 0;
 const nextLocalId = () => {
   localId += 1;
@@ -101,10 +124,48 @@ export function ChatView() {
       const optimistic = { id: nextLocalId(), role: 'user', body };
       setMessages((prev) => [...prev, optimistic]);
       setSending(true);
-      setStatus('Mengetik…');
+      setStatus('Menghubungi AI…');
 
       try {
-        await chatApi.send(body);
+        // Streamed so the thread shows progress instead of a blank
+        // wait: tool names explain the pause, and the reply types out.
+        let streamed = '';
+
+        await chatApi.stream(body, (event) => {
+          if (event.type === 'tool') {
+            setStatus(TOOL_STATUS[event.name] ?? 'Memeriksa data…');
+            return;
+          }
+
+          if (event.type === 'reset') {
+            // What was streamed turned out to be the model narrating a
+            // plan, not answering. Drop it rather than leave a bubble
+            // claiming something happened before it did.
+            streamed = '';
+            setMessages((prev) => prev.filter((m) => m.id !== STREAMING_ID));
+            return;
+          }
+
+          if (event.type === 'token') {
+            streamed += event.text;
+            setStatus('');
+            setMessages((prev) => {
+              const rest = prev.filter((m) => m.id !== STREAMING_ID);
+              return [...rest, { id: STREAMING_ID, role: 'assistant', body: streamed }];
+            });
+            return;
+          }
+
+          if (event.type === 'error') {
+            setMessages((prev) => [
+              ...prev.filter((m) => m.id !== STREAMING_ID),
+              { id: nextLocalId(), role: 'assistant', body: event.message },
+            ]);
+          }
+        });
+
+        // Replace the optimistic and streamed placeholders with the
+        // server's own rows, which carry the real ids and any cards.
         await reload();
       } catch (error) {
         // Each of these is a different thing the user can do next, so
@@ -125,6 +186,7 @@ export function ChatView() {
         setStatus('');
       } finally {
         setSending(false);
+        setStatus('');
       }
     },
     [reload]

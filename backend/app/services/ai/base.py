@@ -11,7 +11,7 @@ action; the backend validates it and does the arithmetic.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -80,11 +80,16 @@ class AiAdapter(Protocol):
         temperature: float = 0.0,
         max_tokens: int | None = None,
         json_object: bool = False,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ChatResult:
         """Run one turn, returning content and any tool calls.
 
         ``enable_thinking`` defaults to off: the PRD specifies reasoning
         is disabled for transaction drafts and receipt extraction because
         it is slower, and enabled only for analysis and explanations.
+
+        ``on_delta`` is called with each content fragment as it arrives.
+        The transport already streams; this just stops the adapter from
+        being the place where the stream ends.
         """
         ...

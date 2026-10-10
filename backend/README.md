@@ -393,6 +393,33 @@ get their own. That is correct for the pilot's single worker, and the
 rate limit caps the damage either way; a shared counter would need
 Redis.
 
+## Streaming to the browser
+
+`POST /chat/messages/stream` emits newline-delimited JSON: `token` for
+each fragment, `tool` when one runs, `draft` when a card is raised,
+`reset`, and finally `done`. NDJSON over a plain POST rather than SSE,
+because `EventSource` cannot POST and the client already reads the body
+as a stream.
+
+`run_turn_events` is the single implementation; the non-streaming
+`POST /chat/messages` drains it into one result, so the two cannot
+drift apart and all the existing tests kept passing unchanged.
+
+**`reset` exists because narration cannot be withheld.** Tokens are
+forwarded the instant they arrive, so by the time a tool call reveals
+that the text was the model describing a plan rather than answering, it
+has already been shown. `reset` tells the client to drop it instead of
+leaving a bubble claiming something happened before it did.
+
+Errors arrive two ways and both matter: as a status code before the
+stream opens (rate limited, busy) and as an `error` event once it has.
+After the first byte the 200 is long since sent, so a client checking
+only the status would read a failed turn as a success.
+
+Measured against the real model: the card appears at 3.0s where the
+whole turn takes 4.1s, and for a read question tokens flow from 2.1s to
+2.8s rather than arriving in one lump at the end.
+
 ## Not built yet
 
 - **Deposit schedules.** Goals carry a target date but no deposit dates,

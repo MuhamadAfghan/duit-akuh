@@ -8,7 +8,7 @@ calling tools, an outage.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from .base import AiError, ChatResult, ToolCall, Usage
@@ -39,6 +39,7 @@ class FakeAdapter:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         json_object: bool = False,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ChatResult:
         self.calls.append(
             {
@@ -56,6 +57,13 @@ class FakeAdapter:
 
         if isinstance(item, Exception):
             raise item
+
+        # Emit the scripted content in a couple of pieces so streaming
+        # consumers are exercised rather than seeing one lump.
+        if on_delta is not None and item.content:
+            middle = max(1, len(item.content) // 2)
+            on_delta(item.content[:middle])
+            on_delta(item.content[middle:])
 
         return item
 

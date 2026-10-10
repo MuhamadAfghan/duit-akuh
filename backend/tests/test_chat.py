@@ -9,6 +9,7 @@ to stop calling tools, and the service being down entirely.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -945,3 +946,151 @@ def test_reads_are_not_rate_limited(chat):
 
     assert chat.get("/chat/messages").status_code == 200
     assert chat.get("/summary").status_code == 200
+
+
+# ----------------------------------------------------------------------
+# Streaming
+# ----------------------------------------------------------------------
+
+
+def stream(chat, body: str) -> list[dict]:
+    """Collect the NDJSON events from one streamed turn."""
+    with chat.stream("POST", "/chat/messages/stream", json={"body": body}) as response:
+        assert response.status_code == 200, response.read()
+        assert response.headers["content-type"].startswith("application/x-ndjson")
+
+        return [json.loads(line) for line in response.iter_lines() if line.strip()]
+
+
+def test_a_streamed_turn_ends_with_done(chat):
+    chat.adapter.queue(text("Halo!"))
+
+    events = stream(chat, "halo")
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["reply"] == "Halo!"
+    assert events[-1]["degraded"] is False
+
+
+def test_content_arrives_as_tokens_before_the_final_reply(chat):
+    chat.adapter.queue(text("Saldo likuidmu Rp1.000.000."))
+
+    events = stream(chat, "saldo berapa")
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+
+    assert len(tokens) > 1, "the reply should arrive in pieces, not one lump"
+    assert "".join(tokens) == "Saldo likuidmu Rp1.000.000."
+
+
+def test_tool_calls_are_announced_so_the_wait_is_explicable(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(tool("get_summary", {}))
+    chat.adapter.queue(text("Rp1.000.000."))
+
+    events = stream(chat, "saldo berapa")
+
+    assert [e["name"] for e in events if e["type"] == "tool"] == ["get_summary"]
+
+
+def test_a_draft_is_announced_as_soon_as_it_exists(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 35_000, "from_account": "bca"}]},
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+
+    events = stream(chat, "makan 35rb pakai bca")
+
+    draft_events = [e for e in events if e["type"] == "draft"]
+    assert len(draft_events) == 1
+
+    done = events[-1]
+    assert done["drafts"][0]["id"] == draft_events[0]["draft_id"]
+    assert done["drafts"][0]["payload"]["amount"] == 35_000
+
+
+def test_narration_alongside_a_tool_call_is_retracted(chat):
+    """Text produced with a tool call is the model describing a plan.
+
+    Tokens are forwarded the moment they arrive, so narration cannot be
+    withheld - by the time we know a tool call follows it has already
+    gone out. A `reset` event tells the client to drop what it showed,
+    rather than leave a bubble claiming something happened before it
+    did.
+    """
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 35_000, "from_account": "bca"}]},
+            content="Sebentar, saya buatkan draftnya...",
+        )
+    )
+    chat.adapter.queue(text("Selesai."))
+
+    events = stream(chat, "makan 35rb pakai bca")
+    kinds = [e["type"] for e in events]
+
+    assert "reset" in kinds, "narration must be retracted"
+    # Everything streamed after the reset is the real answer.
+    after_reset = kinds.index("reset")
+    final = "".join(
+        e["text"] for e in events[after_reset:] if e["type"] == "token"
+    )
+
+    assert final == "Selesai."
+    assert events[-1]["reply"] == "Selesai."
+
+
+def test_an_outage_still_ends_the_stream_properly(chat):
+    chat.adapter.queue(outage())
+
+    events = stream(chat, "halo")
+    done = events[-1]
+
+    assert done["type"] == "done"
+    assert done["degraded"] is True
+    assert "manual" in done["reply"].lower()
+
+
+def test_the_streaming_endpoint_is_rate_limited_too(chat):
+    from app.services.ai.limits import RATE_LIMIT
+
+    for _ in range(RATE_LIMIT + 2):
+        chat.adapter.queue(text("ok"))
+    for _ in range(RATE_LIMIT):
+        chat.post("/chat/messages", json={"body": "halo"})
+
+    response = chat.post("/chat/messages/stream", json={"body": "halo"})
+
+    assert response.status_code == 429
+    assert response.json()["detail"]["code"] == "ai_rate_limited"
+
+
+def test_streaming_requires_a_session(engine, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from app import db as db_module
+    from app.main import app
+
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False, future=True)
+    monkeypatch.setattr(db_module, "get_session_factory", lambda: factory)
+
+    with TestClient(app) as anon:
+        assert anon.post("/chat/messages/stream", json={"body": "x"}).status_code == 401
+
+
+def test_a_streamed_turn_is_persisted_like_any_other(chat):
+    chat.adapter.queue(text("Halo!"))
+    stream(chat, "halo lewat stream")
+
+    bodies = [m["body"] for m in chat.get("/chat/messages").json()]
+
+    assert bodies == ["halo lewat stream", "Halo!"]

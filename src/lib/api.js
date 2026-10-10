@@ -146,9 +146,80 @@ export const transactionsApi = {
   preview: (draft) => api.post('/transactions/preview', draft),
 };
 
+/**
+ * Stream one chat turn, calling `onEvent` for each NDJSON line.
+ *
+ * Newline-delimited JSON over a plain POST rather than SSE, because
+ * `EventSource` cannot POST and we already read the body as a stream.
+ *
+ * Errors arrive two ways and both matter: as a status code before the
+ * stream opens (rate limited, busy), and as an `error` event inside it
+ * once it has. By then the 200 has already been sent, so a client that
+ * only checked the status would read a failed turn as a success.
+ */
+export async function streamChat(body, onEvent, { signal } = {}) {
+  let response;
+
+  try {
+    response = await fetch(`${BASE}/chat/messages/stream`, {
+      method: 'POST',
+      signal,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body }),
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw error;
+    }
+    throw new ApiError('Tidak ada koneksi ke server.', { status: 0, code: 'offline' });
+  }
+
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    const { code, message } = extractError(response.status, payload);
+    throw new ApiError(message, { status: response.status, code, body: payload });
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  // Read line by line: a chunk can split a JSON object anywhere, so
+  // the remainder is carried over rather than parsed half-formed.
+  for (;;) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (line.trim()) {
+        onEvent(JSON.parse(line));
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    onEvent(JSON.parse(buffer));
+  }
+}
+
 export const chatApi = {
   messages: () => api.get('/chat/messages'),
   send: (body, { signal } = {}) => api.post('/chat/messages', { body }, { signal }),
+  stream: streamChat,
   confirmDraft: (id) => api.post(`/chat/drafts/${id}/confirm`),
   cancelDraft: (id) => api.post(`/chat/drafts/${id}/cancel`),
 };

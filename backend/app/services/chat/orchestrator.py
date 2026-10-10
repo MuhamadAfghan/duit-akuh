@@ -19,10 +19,12 @@ Three constraints from the PRD shape this:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -184,13 +186,39 @@ def _log_ai(
 
 
 async def run_turn(
+    db: DbSession, *, user_id: uuid.UUID, adapter: AiAdapter, body: str
+) -> TurnResult:
+    """Process one message and return the finished turn.
+
+    Drains :func:`run_turn_events`, so the streaming and non-streaming
+    paths cannot drift apart - there is one implementation and two
+    presentations of it.
+    """
+    result: TurnResult | None = None
+
+    async for event in run_turn_events(db, user_id=user_id, adapter=adapter, body=body):
+        if event["type"] == "done":
+            result = event["result"]
+
+    assert result is not None, "run_turn_events must always end with a done event"
+
+    return result
+
+
+async def run_turn_events(
     db: DbSession,
     *,
     user_id: uuid.UUID,
     adapter: AiAdapter,
     body: str,
-) -> TurnResult:
-    """Process one user message end to end."""
+) -> AsyncIterator[dict[str, Any]]:
+    """Process one user message, yielding progress as it happens.
+
+    Events: ``token`` for each content fragment, ``tool`` when one is
+    called, ``draft`` when a card is raised, and finally ``done``
+    carrying the TurnResult. The browser gets something to show within
+    a second instead of a blank wait.
+    """
     conversation = get_or_create_conversation(db, user_id)
 
     db.add(
@@ -226,8 +254,19 @@ async def run_turn(
     for _ in range(MAX_TOOL_ROUNDS):
         started = time.monotonic()
 
+        streamed_any = False
+
         try:
-            result = await adapter.chat(messages=prompt, tools=ALL_TOOLS)
+            # Tokens are forwarded as they arrive rather than collected
+            # and flushed at the end. Buffering them put a silent gap of
+            # a second or more between the tool finishing and any text
+            # appearing, which is the wait this exists to remove.
+            async for item in _stream_round(adapter, prompt):
+                if isinstance(item, str):
+                    streamed_any = True
+                    yield {"type": "token", "text": item}
+                else:
+                    result = item
         except AiError as exc:
             _log_ai(
                 db, user_id=user_id, result=None, started=started, status="error", error=str(exc)
@@ -241,6 +280,13 @@ async def run_turn(
         if not result.tool_calls:
             reply = result.content.strip()
             break
+
+        # Text produced alongside a tool call is the model narrating a
+        # plan, not answering. It has already been streamed, so tell the
+        # client to drop it rather than leave a bubble claiming
+        # something happened before it did.
+        if streamed_any:
+            yield {"type": "reset"}
 
         # Echo the assistant's tool call turn, then each result, exactly
         # as the OpenAI protocol expects.
@@ -263,10 +309,16 @@ async def run_turn(
         )
 
         for call in result.tool_calls:
+            yield {"type": "tool", "name": call.name}
+
             output = dispatch(db, user_id, call.name, call.arguments)
 
             if call.name in PROPOSE_TOOL_NAMES and "error" not in output:
-                drafts.extend(_collect_drafts(db, user_id, output))
+                new_drafts = _collect_drafts(db, user_id, output)
+                drafts.extend(new_drafts)
+
+                for draft in new_drafts:
+                    yield {"type": "draft", "draft_id": str(draft.id)}
 
             prompt.append(
                 {
@@ -317,7 +369,10 @@ async def run_turn(
 
     db.flush()
 
-    return TurnResult(reply=reply, drafts=drafts, degraded=degraded)
+    yield {
+        "type": "done",
+        "result": TurnResult(reply=reply, drafts=drafts, degraded=degraded),
+    }
 
 
 async def _retry_with_nudge(
@@ -382,3 +437,42 @@ def _collect_drafts(db: DbSession, user_id: uuid.UUID, output: dict) -> list[Dra
             select(Draft).where(Draft.user_id == user_id, Draft.id.in_([uuid.UUID(i) for i in ids]))
         ).all()
     )
+
+
+async def _stream_round(adapter: AiAdapter, prompt: list[dict[str, Any]]):
+    """Run one model call, yielding each token then the finished result.
+
+    The adapter reports tokens through a synchronous callback while it
+    is awaited, so they go onto a queue and are drained here. Without
+    this the generator could only yield after the whole call returned,
+    which is the buffering it exists to avoid.
+
+    Yields ``str`` for each fragment and finally the :class:`ChatResult`.
+    """
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    call = asyncio.create_task(
+        adapter.chat(messages=prompt, tools=ALL_TOOLS, on_delta=queue.put_nowait)
+    )
+
+    try:
+        while True:
+            getter = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait({getter, call}, return_when=asyncio.FIRST_COMPLETED)
+
+            if getter in done:
+                yield getter.result()
+                continue
+
+            # The call finished. Cancel the pending read and drain
+            # whatever landed in the queue just before it did.
+            getter.cancel()
+            break
+    finally:
+        if not call.done():
+            call.cancel()
+
+    while not queue.empty():
+        yield queue.get_nowait()
+
+    # Re-raises AiError here, where the caller already handles it.
+    yield await call
