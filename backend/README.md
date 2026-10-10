@@ -225,11 +225,34 @@ Also tightened: `get_summary` returns all-time totals with no period
 filter, and the model was labelling them "bulan ini". The tool
 description now says so, and the model answers honestly instead.
 
+## Periods (FR06)
+
+`GET /reports/spending?period=bulan_ini` and the `get_spending` tool
+answer "bulan ini makan berapa" with a category breakdown.
+
+Ranges are resolved in the **user's timezone**, in
+`app/domain/periods.py`. That is the whole difficulty: Jakarta is UTC+7,
+so October begins at 17:00 UTC on 30 September. A UTC month boundary
+would file a 06:00 purchase on 1 October into the previous month. Ranges
+are half-open so a transaction at exactly midnight belongs to one period
+only.
+
+What counts as spending needs no special-casing — it falls out of
+double entry. A query restricted to expense accounts cannot see
+transfers (they touch only assets) or card payments (they debit a
+liability), and a refund credits its expense account so it nets off on
+its own.
+
+`semua` is unbounded at both ends on purpose: capping it at today would
+hide a transaction accidentally dated in the future, which is the one
+view meant to show everything.
+
+Balances stay out of this endpoint. A balance is a point in time, not a
+range, and putting both in one response invites reading a month's
+spending as if it were a balance.
+
 ## Not built yet
 
-- **Period filtering.** `get_summary` and `find_transactions` have no
-  date range, so "bulan ini makan berapa" (FR06) cannot be answered
-  properly yet — only deflected.
 - **Goals, budgets, simulation.** The `Goal` and `Allocation` tables and the
   allocation rule exist; the services on top do not. Their tools are
   withheld from the model until they do.

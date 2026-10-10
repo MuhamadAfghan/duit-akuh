@@ -28,6 +28,7 @@ from ...domain.balances import (
     total_debt,
 )
 from ...domain.errors import AmbiguousAccount, DomainError
+from ...domain.periods import PeriodError, resolve_period
 from ...models import (
     LIQUID_TYPES,
     Account,
@@ -36,11 +37,13 @@ from ...models import (
     Draft,
     DraftStatus,
     Transaction,
+    User,
 )
 from ...money import MoneyError, positive_rupiah, rupiah
 from ..accounts import resolve_account
 from ..drafts import build_legs
 from ..posting import account_snapshots
+from ..reporting import category_total_for_period, known_expense_categories, period_report
 
 #: Account types the model may create. Deliberately excludes debit cards
 #: and anything system-owned.
@@ -126,6 +129,55 @@ def tool_get_summary(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
         "is_shortfall": fts.is_shortfall,
         "expense_total": category_total(snapshots, kind=AccountKind.EXPENSE),
         "income_total": category_total(snapshots, kind=AccountKind.INCOME),
+    }
+
+
+def tool_get_spending(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    """Spending for a period, optionally narrowed to one category (FR06)."""
+    user = db.get(User, user_id)
+    keyword = args.get("period") or "bulan_ini"
+
+    if not isinstance(keyword, str):
+        raise ToolError("Field 'period' harus berupa teks")
+
+    try:
+        period = resolve_period(
+            keyword,
+            now=datetime.now(timezone.utc),
+            timezone_name=getattr(user, "timezone", None),
+        )
+    except PeriodError as exc:
+        raise ToolError(str(exc)) from exc
+
+    requested = args.get("category")
+
+    if isinstance(requested, str) and requested.strip():
+        total = category_total_for_period(db, user_id, period, requested)
+
+        if total is None:
+            # Unknown category: say which ones exist rather than answer
+            # zero, which would read as "you spent nothing" (AC04's
+            # principle - do not answer an ambiguous reference).
+            known = known_expense_categories(db, user_id)
+            raise ToolError(
+                f"Kategori '{requested}' belum pernah dipakai. "
+                + (f"Yang ada: {', '.join(known)}." if known else "Belum ada kategori sama sekali.")
+            )
+
+        return {
+            "period": period.label,
+            "category": requested.strip(),
+            "total": total,
+        }
+
+    report = period_report(db, user_id, period)
+
+    return {
+        "period": report.label,
+        "expense_total": report.expense_total,
+        "income_total": report.income_total,
+        "categories": [{"name": c.name, "amount": c.amount} for c in report.categories],
+        "transaction_count": report.transaction_count,
     }
 
 
@@ -368,6 +420,7 @@ def tool_propose_correction(db: DbSession, user_id: uuid.UUID, args: dict) -> di
 HANDLERS = {
     "get_accounts": tool_get_accounts,
     "get_summary": tool_get_summary,
+    "get_spending": tool_get_spending,
     "find_transactions": tool_find_transactions,
     "propose_transactions": tool_propose_transactions,
     "propose_account_change": tool_propose_account_change,

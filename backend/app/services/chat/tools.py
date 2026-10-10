@@ -24,6 +24,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from ...domain.periods import PERIOD_KEYWORDS
+
 #: Amounts are integers of rupiah everywhere. Said explicitly in each
 #: description because a model will otherwise emit 35.5 for "35 ribu
 #: setengah" and the backend will reject it.
@@ -44,12 +46,39 @@ READ_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "get_summary",
             "description": (
-                "Ringkasan: saldo likuid, aset bersih, total utang, uang bebas pakai, "
-                "serta total pengeluaran dan pemasukan SEJAK AWAL (bukan per bulan). "
-                "Belum ada penyaringan periode, jadi jangan sebut angkanya sebagai "
-                "'bulan ini' atau periode lain; katakan itu total keseluruhan."
+                "Posisi saat ini: saldo likuid, aset bersih, total utang, uang bebas "
+                "pakai. Saldo adalah nilai sekarang, bukan per periode. Untuk "
+                "pengeluaran dalam suatu periode, pakai get_spending."
             ),
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_spending",
+            "description": (
+                "Total pengeluaran dan pemasukan untuk SATU PERIODE, dengan rincian "
+                "per kategori. Pakai ini untuk pertanyaan seperti 'bulan ini makan "
+                "berapa' atau 'pengeluaran minggu ini'. Transfer dan pembayaran kartu "
+                "tidak dihitung sebagai belanja; refund sudah dikurangi."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "enum": list(PERIOD_KEYWORDS),
+                        "description": "Default bulan_ini",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": (
+                            "Opsional. Jika diisi, kembalikan total kategori itu saja."
+                        ),
+                    },
+                },
+            },
         },
     },
     {

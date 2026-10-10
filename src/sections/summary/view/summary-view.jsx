@@ -12,7 +12,7 @@ import LinearProgress from '@mui/material/LinearProgress';
 
 import { formatRupiah } from 'src/utils/format-money';
 
-import { accountsApi } from 'src/lib/api';
+import { reportsApi, accountsApi } from 'src/lib/api';
 
 import { Iconify } from 'src/components/iconify';
 
@@ -49,15 +49,21 @@ function Figure({ label, value, hint, emphasis = false, negative = false }) {
 export function SummaryView() {
   const [data, setData] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [summary, rows] = await Promise.all([accountsApi.summary(), accountsApi.list()]);
+      const [summary, rows, spending] = await Promise.all([
+        accountsApi.summary(),
+        accountsApi.list(),
+        reportsApi.spending('bulan_ini'),
+      ]);
       setData(summary);
       setAccounts(rows);
+      setReport(spending);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -167,17 +173,37 @@ export function SummaryView() {
           </Stack>
         </Card>
 
-        {/* Totals are all-time: the backend has no period filter yet, so
-            labelling them "bulan ini" would be wrong. */}
-        <Card sx={{ p: 2 }}>
-          <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-            Sejak awal
-          </Typography>
-          <Stack sx={{ mt: 1.5, gap: 1 }}>
-            <Figure label="Pengeluaran" value={data.expense_total} />
-            <Figure label="Pemasukan" value={data.income_total} />
-          </Stack>
-        </Card>
+        {report && (
+          <Card sx={{ p: 2 }}>
+            {/* The period comes from the backend, which resolves it in the
+                user's timezone — the label and the figures cannot disagree. */}
+            <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+              {report.label}
+            </Typography>
+
+            <Stack sx={{ mt: 1.5, gap: 1 }}>
+              <Figure label="Pengeluaran" value={report.expense_total} />
+              <Figure label="Pemasukan" value={report.income_total} />
+            </Stack>
+
+            {report.categories.length > 0 && (
+              <>
+                <Divider sx={{ my: 2, borderStyle: 'dashed' }} />
+                <Stack sx={{ gap: 1 }}>
+                  {report.categories.map((category) => (
+                    <Figure key={category.name} label={category.name} value={category.amount} />
+                  ))}
+                </Stack>
+              </>
+            )}
+
+            {!report.transaction_count && (
+              <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+                Belum ada transaksi pada periode ini.
+              </Typography>
+            )}
+          </Card>
+        )}
       </Stack>
     );
   };

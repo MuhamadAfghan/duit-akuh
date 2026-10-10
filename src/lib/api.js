@@ -127,6 +127,11 @@ export const accountsApi = {
   summary: () => api.get('/summary'),
 };
 
+export const reportsApi = {
+  /** Period keywords the backend accepts: hari_ini, minggu_ini, bulan_ini, … */
+  spending: (period = 'bulan_ini') => api.get(`/reports/spending?period=${period}`),
+};
+
 export const transactionsApi = {
   list: (limit = 50) => api.get(`/transactions?limit=${limit}`),
   preview: (draft) => api.post('/transactions/preview', draft),
