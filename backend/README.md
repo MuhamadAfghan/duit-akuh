@@ -159,9 +159,54 @@ Amounts are `StrictInt` on the wire. Without it Pydantic would coerce
 `35000.4` to an int and round money away, so even a lossless `35000.0`
 is rejected — accepting it invites `35000.4` next.
 
+## Chat orchestrator
+
+`services/chat/` turns a sentence into a confirmed transaction.
+
+One turn: the user's message plus a recent window of the thread goes to
+the model with the tool list; tool calls are executed; results are fed
+back; the reply and any drafts are stored. Bounded at 3 model rounds —
+each is another call on a shared GPU, and an unbounded loop could not
+finish inside Cloudflare's window anyway.
+
+**Read tools run immediately; propose tools never write.** A propose
+tool stores a `Draft` row with the validated payload and its computed
+impact. Confirming posts _from that row_, never from the model's output
+again, so what the card showed is what gets written. The draft's
+`operation_id` is the idempotency key, which makes a double tap or a
+stale card harmless (AC04/AC13).
+
+Only tools with a working backend are exposed. `run_simulation`,
+`propose_goal`, `propose_allocation` and `propose_budget` from the PRD's
+table are deliberately absent — a tool the model can call but the server
+cannot fulfil teaches it to promise things that fail.
+
+Model output is **untrusted data, not instruction**. The dispatcher
+re-validates every field, re-resolves account names through the same
+ambiguity rules the REST API uses, and recomputes every figure from the
+database. An ambiguous name returns an error to the model so it asks the
+user, rather than picking one (AC04).
+
+`services/ai/` holds the adapter. `OpenAiCompatAdapter` talks to vLLM;
+`FakeAdapter` scripts turns for tests, so the orchestrator runs with no
+network, GPU or API key.
+
+**Requests are streamed.** Not for UI smoothness: Cloudflare returns 524
+if a response has not _started_ within 100 seconds, and a queued
+generation on a shared GPU can exceed that before its first token.
+
+An outage degrades rather than failing — the reply becomes a plain
+message pointing at manual entry, and the user's text is still saved
+(AC09/AC22).
+
 ## Not built yet
 
-- **The chat orchestrator** and the adapter for the self-hosted `lumi-ai`
-  service (PRD section 13). Config keys are already read in `config.py`.
 - **Goals, budgets, simulation.** The `Goal` and `Allocation` tables and the
-  allocation rule exist; the services on top do not.
+  allocation rule exist; the services on top do not. Their tools are
+  withheld from the model until they do.
+- **Voice and receipt OCR** (stage 2). The adapter has `vision` and
+  `transcribe` in its interface but no implementation.
+- **Per-user rate limiting and a queue.** `lumi-ai` allows 16 parallel
+  requests shared with other apps; nothing enforces a share yet.
+- **Streaming to the browser.** The adapter streams from vLLM, but
+  `/chat/messages` returns one complete turn.

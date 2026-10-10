@@ -37,6 +37,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Identity,
     Index,
     String,
     Text,
@@ -430,3 +431,130 @@ class LoginAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class MessageRole(str, enum.Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class DraftStatus(str, enum.Enum):
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+    #: The world moved on - a balance changed, an account was archived -
+    #: so the draft's preview no longer describes what would happen.
+    STALE = "stale"
+
+
+class Conversation(Base, OwnedMixin, TimestampMixin):
+    """The single persistent thread (PRD FR14, FR15).
+
+    One per user, enforced by a unique constraint rather than convention:
+    the PRD is explicit that there is one main chat continuing across
+    sessions and devices, with no per-topic threads to switch between.
+    """
+
+    __tablename__ = "conversations"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_conversation_per_user"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+
+
+class Message(Base, OwnedMixin):
+    """One turn in the thread."""
+
+    __tablename__ = "messages"
+    __table_args__ = (Index("ix_messages_conversation_seq", "conversation_id", "seq"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+
+    #: Ordering key. NOT created_at: PostgreSQL's now() returns the
+    #: transaction start time, so every message written in one turn - the
+    #: user's message, the reply, and each card - shares a timestamp and
+    #: the thread renders in arbitrary order. A sequence cannot tie.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False, unique=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    role: Mapped[MessageRole] = mapped_column(
+        Enum(MessageRole, name="message_role"), nullable=False
+    )
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: Set when this turn is a card rather than prose. The card's content
+    #: lives on the Draft row so it cannot drift from what gets posted.
+    draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drafts.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class Draft(Base, OwnedMixin, TimestampMixin):
+    """A proposed change, awaiting confirmation (PRD FR05).
+
+    The model proposes; this row records what the backend *validated* and
+    what it showed the user. Confirming posts from this row, never from
+    the model's output again — so what was previewed is what is written,
+    and a replayed confirmation cannot smuggle in different numbers.
+    """
+
+    __tablename__ = "drafts"
+    __table_args__ = (Index("ix_drafts_user_status", "user_id", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+
+    #: What kind of change: matches the API draft discriminator.
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[DraftStatus] = mapped_column(
+        Enum(DraftStatus, name="draft_status"), nullable=False, default=DraftStatus.PENDING
+    )
+
+    #: The validated draft body, in the same shape the REST API accepts.
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    #: The impact rows shown to the user, stored so the card can be
+    #: re-rendered later exactly as it was.
+    impact: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    #: Doubles as the idempotency key when confirmed, which is what makes
+    #: tapping a stale card twice harmless (AC13).
+    operation_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+
+    transaction_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class AiRequestLog(Base, OwnedMixin):
+    """Per-request AI telemetry required by PRD section 13.
+
+    Records what was asked of the model and what it cost, but never the
+    prompt or the answer: those are the user's financial life, and the
+    retention policy for them is a separate decision.
+    """
+
+    __tablename__ = "ai_request_logs"
+    __table_args__ = (Index("ix_ai_logs_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    #: chat | vision | stt
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str] = mapped_column(String(80), nullable=False)
+    operation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    prompt_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Names only, never arguments: arguments carry amounts and accounts.
+    tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)

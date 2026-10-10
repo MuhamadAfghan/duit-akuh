@@ -265,3 +265,10 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_users_email"), table_name="users")
     op.drop_table("users")
     # ### end Alembic commands ###
+    # Alembic does not drop PostgreSQL ENUM types it created, so a
+    # downgrade followed by an upgrade fails with "type already exists".
+    # Dropping them here keeps the cycle reversible.
+    op.execute("DROP TYPE IF EXISTS account_type")
+    op.execute("DROP TYPE IF EXISTS account_kind")
+    op.execute("DROP TYPE IF EXISTS transaction_type")
+    op.execute("DROP TYPE IF EXISTS transaction_status")

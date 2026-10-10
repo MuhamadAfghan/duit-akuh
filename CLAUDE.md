@@ -198,12 +198,12 @@ Built so far — the chat-first shell (UI only, no real data):
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
-- **The chat orchestrator does not exist.** The API can create accounts and post transactions, but nothing calls `lumi-ai` and nothing turns a sentence into a draft.
+- **The frontend does not call the backend at all.** The orchestrator works (`/chat/messages`), but the Next.js chat is still driven by `stub-orchestrator.js`.
 - **`src/sections/chat/stub-orchestrator.js` is a throwaway.** It fakes a draft from a crude regex so the card states can be exercised. Delete it when the orchestrator lands — the model must do the interpreting and the backend must compute every balance.
 - **`CONFIG.auth.skip` is temporarily `true`** so the UI is reachable without the vendor demo API. Must return to `false` before any real data exists.
 - **The frontend still points at the vendor demo API** for auth and must be switched to `backend/`'s `/auth/*`.
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
-- **Chat is not streamed.** Cloudflare's 100s deadline makes streaming mandatory once the real LLM is wired.
+- **Chat is not streamed to the browser.** The backend adapter streams from vLLM (required: Cloudflare 524s past 100s), but `/chat/messages` returns one complete turn.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
 - **The frontend has no test runner.** The backend has pytest covering AC01–AC05 and AC08; nothing covers the React side.
 - **The chat thread does not survive navigation.** `ChatView` holds messages in local `useState`, so switching to Ringkasan and back empties the conversation. The PRD wants one thread that continues across sessions and devices (FR15), which only the backend can provide — do not paper over this with client storage; it is the orchestrator's job.

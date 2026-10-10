@@ -3,7 +3,8 @@
 Every money endpoint goes through ``deps.get_current_user``, which has
 no bypass by design (AC08).
 
-Next: the chat orchestrator that calls the lumi-ai service.
+The chat orchestrator is wired to the lumi-ai adapter; see
+``services/chat/``.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from .api.routes_accounts import router as accounts_router
 from .api.routes_auth import router as auth_router
+from .api.routes_chat import router as chat_router
 from .api.routes_transactions import router as transactions_router
 from .config import get_settings
 from .domain.errors import DomainError
@@ -54,6 +56,7 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
 app.include_router(auth_router)
 app.include_router(accounts_router)
 app.include_router(transactions_router)
+app.include_router(chat_router)
 
 
 @app.get("/health", tags=["ops"])
