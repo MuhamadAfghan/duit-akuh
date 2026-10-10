@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from .api.routes_accounts import router as accounts_router
 from .api.routes_auth import router as auth_router
+from .api.routes_budgets import router as budgets_router
 from .api.routes_chat import router as chat_router
 from .api.routes_goals import router as goals_router
 from .api.routes_reports import router as reports_router
@@ -61,6 +62,7 @@ app.include_router(transactions_router)
 app.include_router(chat_router)
 app.include_router(reports_router)
 app.include_router(goals_router)
+app.include_router(budgets_router)
 
 
 @app.get("/health", tags=["ops"])

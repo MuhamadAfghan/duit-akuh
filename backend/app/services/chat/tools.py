@@ -92,6 +92,27 @@ READ_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "get_budgets",
+            "description": (
+                "Budget tiap kategori beserta realisasi dan sisanya untuk satu "
+                "periode. Budget adalah rencana belanja, BUKAN saldo - tidak "
+                "mengurangi uang bebas pakai."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "enum": list(PERIOD_KEYWORDS),
+                        "description": "Default bulan_ini",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_transactions",
             "description": (
                 "Daftar transaksi TERBARU (bukan hasil pencarian per kata kunci "
@@ -114,7 +135,9 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "propose_transactions",
             "description": (
-                "Buat draft satu atau beberapa transaksi dari pesan pengguna. "
+                "Catat satu atau beberapa transaksi yang SUDAH terjadi. Ini pilihan "
+                "default untuk pesan yang menceritakan belanja, pemasukan atau "
+                "transfer, termasuk ketika kategori disebut ('makan 35rb'). "
                 "TIDAK menyimpan apa pun; pengguna harus mengonfirmasi. "
                 "Jika nama kantong ambigu atau tidak disebut, tanyakan dulu, jangan menebak."
             ),
@@ -234,6 +257,30 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "propose_budget",
+            "description": (
+                "Atur BATAS belanja bulanan sebuah kategori. HANYA gunakan ketika "
+                "pengguna meminta menetapkan batas, misalnya 'budget makan 1 juta', "
+                "'batasi transport 500rb', 'maksimal jajan 300rb sebulan'. "
+                "JANGAN gunakan untuk mencatat belanja yang sudah terjadi. "
+                "'makan 850rb pakai BCA' adalah PENGELUARAN - pakai "
+                "propose_transactions. Petunjuk kuat: kalau pesan menyebut kantong "
+                "('pakai BCA', 'dari cash') itu transaksi, bukan budget, karena "
+                "budget tidak punya kantong."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string"},
+                    "amount": dict(_AMOUNT, description="Batas per bulan, rupiah bulat"),
+                },
+                "required": ["category", "amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "propose_correction",
             "description": (
                 "Buat draft pembatalan sebuah transaksi. Gunakan find_transactions "
@@ -278,6 +325,10 @@ Aturan lain:
 - Membayar tagihan kartu kredit BUKAN pengeluaran baru.
 - Jika kantong tidak disebut atau namanya cocok dengan lebih dari satu, TANYA dulu. Jangan menebak.
 - Tool propose_* hanya membuat draft; pengguna yang mengonfirmasi. Jangan bilang sudah tersimpan.
+- Mencatat belanja dan mengatur budget itu berbeda. "makan 850rb pakai BCA"
+  = catat pengeluaran. "budget makan 1 juta" = atur batas. Kalau ragu, dan
+  pesan menyebut kantong atau terdengar seperti sesuatu yang sudah terjadi,
+  itu transaksi.
 - Jika hanya ADA SATU kantong yang cocok dengan yang disebut pengguna, langsung
   pakai kantong itu. Bertanya hanya jika benar-benar ada lebih dari satu.
 - Jawab ringkas, dalam bahasa Indonesia.

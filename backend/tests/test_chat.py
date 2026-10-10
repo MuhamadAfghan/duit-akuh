@@ -673,9 +673,7 @@ def test_an_ordinary_answer_does_not_trigger_a_retry(chat):
 
 
 def test_creating_a_goal_through_chat_needs_confirmation(chat):
-    chat.adapter.queue(
-        tool("propose_goal", {"name": "Laptop", "target_amount": 15_000_000})
-    )
+    chat.adapter.queue(tool("propose_goal", {"name": "Laptop", "target_amount": 15_000_000}))
     chat.adapter.queue(text("Ini draft targetnya."))
 
     result = send(chat, "bikin target laptop 15 juta")

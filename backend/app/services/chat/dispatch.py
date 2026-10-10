@@ -34,6 +34,7 @@ from ...models import (
     Account,
     AccountKind,
     Allocation,
+    Budget,
     Draft,
     DraftStatus,
     Goal,
@@ -42,6 +43,7 @@ from ...models import (
 )
 from ...money import MoneyError, positive_rupiah, rupiah
 from ..accounts import resolve_account
+from ..budgets import report as budget_report
 from ..drafts import build_legs
 from ..goals import headroom, saved_for
 from ..posting import account_snapshots
@@ -199,6 +201,84 @@ def tool_get_goals(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
             }
             for g in rows
         ]
+    }
+
+
+def tool_get_budgets(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    user = db.get(User, user_id)
+    keyword = args.get("period") or "bulan_ini"
+
+    try:
+        period = resolve_period(
+            keyword,
+            now=datetime.now(timezone.utc),
+            timezone_name=getattr(user, "timezone", None),
+        )
+    except PeriodError as exc:
+        raise ToolError(str(exc)) from exc
+
+    report = budget_report(db, user_id, period)
+
+    return {
+        "period": report.label,
+        "budgets": [
+            {
+                "category": s.category,
+                "limit": s.limit,
+                "spent": s.spent,
+                "remaining": s.remaining,
+                "percent": s.percent,
+                "state": s.state.value,
+            }
+            for s in report.statuses
+        ],
+        "note": "Budget adalah rencana belanja, bukan saldo.",
+    }
+
+
+def tool_propose_budget(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    category = _require_str(args, "category")
+
+    try:
+        amount = positive_rupiah(args.get("amount"))
+    except MoneyError as exc:
+        raise ToolError(str(exc)) from exc
+
+    # Show the change when a limit already exists: replacing a budget is
+    # a real edit, and FR05 requires the impact to be visible before the
+    # user confirms.
+    current = db.scalar(
+        select(Budget)
+        .join(Account, Account.id == Budget.category_account_id)
+        .where(
+            Budget.user_id == user_id,
+            Account.kind == AccountKind.EXPENSE,
+            func.lower(Account.name) == category.lower(),
+        )
+    )
+
+    impact = [
+        {
+            "account": f"Budget {category}",
+            "before": current.amount if current else 0,
+            "after": amount,
+            "delta": amount - (current.amount if current else 0),
+        }
+    ]
+
+    draft = _store_draft(
+        db,
+        user_id=user_id,
+        kind="budget",
+        payload={"category": category, "amount": amount},
+        impact=impact,
+    )
+
+    return {
+        "draft_id": str(draft.id),
+        "operation_id": draft.operation_id,
+        "saved": False,
+        "note": "Menunggu konfirmasi pengguna",
     }
 
 
@@ -551,6 +631,8 @@ HANDLERS = {
     "find_transactions": tool_find_transactions,
     "propose_transactions": tool_propose_transactions,
     "get_goals": tool_get_goals,
+    "get_budgets": tool_get_budgets,
+    "propose_budget": tool_propose_budget,
     "propose_account_change": tool_propose_account_change,
     "propose_goal": tool_propose_goal,
     "propose_allocation": tool_propose_allocation,

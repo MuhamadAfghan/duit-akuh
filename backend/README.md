@@ -276,9 +276,40 @@ runs exactly: a Rp15,000,000 goal with Rp3,000,000 saved over six
 deposits needs Rp2,000,000 each, and a capacity of Rp1,500,000 offers
 eight deposits, Rp3,000,000 more up front, or Rp500,000 more per period.
 
+## Budgets (FR08)
+
+A budget is a **plan for spending, not a claim on cash**. The PRD warns
+about this directly, so it is worth stating: setting a budget does not
+reduce `free_to_spend`. Only actual spending, and reserves the user
+explicitly chooses, do that. There is a test asserting exactly this.
+
+What counts against a budget needs no special-casing — it is the same
+expense-account query the period reports use, so transfers and card-bill
+payments cannot consume a budget, and refunds free it back up.
+
+`remaining` goes negative and `percent` is uncapped, both deliberately:
+an overspend is the one thing a budget exists to surface, so 130% and
+−300,000 are shown rather than clamped. The summary nets categories
+against each other — which is what "am I within budget overall" means —
+but keeps the breached names alongside so a netting can never hide one.
+
+One row per category, recurring monthly, rather than a row per month:
+the PRD describes a standing monthly budget, and twelve rows a year
+would make "change my food budget" ambiguous about which months it meant.
+
+### A disambiguation the model needed
+
+"makan 850rb pakai BCA" was being read as _setting_ a food budget rather
+than recording a purchase, silently overwriting the limit. The tool
+descriptions now draw the line explicitly, with a usable heuristic: a
+message naming a wallet ("pakai BCA") is a transaction, because budgets
+have no wallet. Budget drafts also show the old limit alongside the new
+one, so replacing one is visible before it is confirmed.
+
 ## Not built yet
 
-- **Budgets and simulation** (FR08, FR10–FR12).
+- **Simulation** (FR10–FR12) — the last tool in the PRD's table,
+  `run_simulation`, stays withheld until it exists.
 - **Deposit schedules.** Goals carry a target date but no deposit dates,
   so `remaining_deposits` is supplied by the caller rather than derived.
 - **Voice and receipt OCR** (stage 2). The adapter has `vision` and

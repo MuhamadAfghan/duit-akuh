@@ -31,6 +31,7 @@ from ...models import (
     TransactionType,
 )
 from ..accounts import open_account_with_balance
+from ..budgets import set_budget
 from ..drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
 from ..goals import allocate, create_goal
 from ..posting import post_transaction
@@ -56,6 +57,9 @@ def confirm_draft(db: DbSession, *, user_id: uuid.UUID, draft: Draft) -> dict:
 
     if draft.kind == "allocation":
         return _confirm_allocation(db, user_id, draft)
+
+    if draft.kind == "budget":
+        return _confirm_budget(db, user_id, draft)
 
     return _confirm_transaction(db, user_id, draft)
 
@@ -156,6 +160,20 @@ def _confirm_allocation(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict
         "allocation_id": str(allocation.id),
         "replayed": False,
     }
+
+
+def _confirm_budget(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
+    budget = set_budget(
+        db,
+        user_id=user_id,
+        category=draft.payload["category"],
+        amount=draft.payload["amount"],
+    )
+
+    draft.status = DraftStatus.CONFIRMED
+    db.flush()
+
+    return {"draft_id": str(draft.id), "budget_id": str(budget.id), "replayed": False}
 
 
 def _confirm_reversal(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:

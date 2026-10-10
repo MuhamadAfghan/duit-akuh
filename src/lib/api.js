@@ -132,6 +132,10 @@ export const goalsApi = {
   list: (remainingDeposits = 0) => api.get(`/goals?remaining_deposits=${remainingDeposits}`),
 };
 
+export const budgetsApi = {
+  list: (period = 'bulan_ini') => api.get(`/budgets?period=${period}`),
+};
+
 export const reportsApi = {
   /** Period keywords the backend accepts: hari_ini, minggu_ini, bulan_ini, … */
   spending: (period = 'bulan_ini') => api.get(`/reports/spending?period=${period}`),

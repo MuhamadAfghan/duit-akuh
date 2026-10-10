@@ -558,3 +558,34 @@ class AiRequestLog(Base, OwnedMixin):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Names only, never arguments: arguments carry amounts and accounts.
     tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+
+class Budget(Base, OwnedMixin, TimestampMixin):
+    """A monthly spending limit for one category (PRD FR08).
+
+    A plan, not money. Nothing here reduces a balance or free-to-spend;
+    only reserves the user explicitly chooses do that.
+
+    One row per category, recurring monthly, rather than a row per month:
+    the PRD describes a standing monthly budget, and materialising twelve
+    rows a year would make "change my food budget" ambiguous about which
+    months it meant.
+    """
+
+    __tablename__ = "budgets"
+    __table_args__ = (
+        UniqueConstraint("user_id", "category_account_id", name="uq_budget_per_category"),
+        CheckConstraint("amount > 0", name="ck_budgets_positive"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+
+    #: Must be an expense-kind account; enforced in the service, which
+    #: has the account to inspect.
+    category_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+    )
+
+    amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)

@@ -12,11 +12,12 @@ import LinearProgress from '@mui/material/LinearProgress';
 
 import { formatRupiah } from 'src/utils/format-money';
 
-import { goalsApi, reportsApi, accountsApi } from 'src/lib/api';
+import { goalsApi, budgetsApi, reportsApi, accountsApi } from 'src/lib/api';
 
 import { Iconify } from 'src/components/iconify';
 
 import { GoalCard } from '../goal-card';
+import { BudgetCard, BudgetNote } from '../budget-card';
 import { SurfaceEmpty, SurfaceHeader } from '../../common';
 
 // ----------------------------------------------------------------------
@@ -52,24 +53,27 @@ export function SummaryView() {
   const [accounts, setAccounts] = useState([]);
   const [report, setReport] = useState(null);
   const [goals, setGoals] = useState([]);
+  const [budgets, setBudgets] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [summary, rows, spending, goalRows] = await Promise.all([
+      const [summary, rows, spending, goalRows, budgetReport] = await Promise.all([
         accountsApi.summary(),
         accountsApi.list(),
         reportsApi.spending('bulan_ini'),
         // 6 is a placeholder schedule until goals carry deposit dates;
         // it only affects the per-deposit hint, never the saved figure.
         goalsApi.list(6),
+        budgetsApi.list('bulan_ini'),
       ]);
       setData(summary);
       setAccounts(rows);
       setReport(spending);
       setGoals(goalRows);
+      setBudgets(budgetReport);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -187,6 +191,18 @@ export function SummaryView() {
             {goals.map((goal) => (
               <GoalCard key={goal.id} goal={goal} />
             ))}
+          </Stack>
+        )}
+
+        {budgets?.budgets?.length > 0 && (
+          <Stack sx={{ gap: 1.5 }}>
+            <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+              Budget {budgets.label}
+            </Typography>
+            {budgets.budgets.map((budget) => (
+              <BudgetCard key={budget.category} budget={budget} />
+            ))}
+            <BudgetNote />
           </Stack>
         )}
 
