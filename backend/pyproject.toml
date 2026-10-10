@@ -1,0 +1,30 @@
+[project]
+name = "duit-akuh-backend"
+version = "0.1.0"
+description = "Ledger and chat orchestration API for Duit Akuh"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# Integration tests need a live PostgreSQL and are skipped without one, so
+# marking them keeps `-m "not integration"` available for a fast loop.
+markers = [
+    "integration: requires a live PostgreSQL (set TEST_DATABASE_URL)",
+]
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # Long lines in comments explaining PRD rules are worth more than the
+    # wrapping, and the formatter already handles code.
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

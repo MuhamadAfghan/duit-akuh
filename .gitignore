@@ -54,3 +54,11 @@ dev.log
 chat.html
 dash.html
 page.html
+
+# Python backend
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

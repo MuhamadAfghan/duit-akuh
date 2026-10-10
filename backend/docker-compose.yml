@@ -1,0 +1,34 @@
+# Local PostgreSQL for development and integration tests.
+#
+# The PRD suggests Docker Compose for the stack. This file covers only the
+# database: the API runs on the host during development so reloads are
+# instant. A service for the API can be added when there is something to
+# deploy.
+#
+# Port 5433 on purpose - 5432 is likely taken by a PostgreSQL installed
+# directly on the machine, and clashing with it is a confusing failure.
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: duit-akuh-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: duitakuh
+      POSTGRES_PASSWORD: duitakuh_dev
+      POSTGRES_DB: duitakuh
+      # Deterministic collation, so ordering does not differ between a
+      # developer's machine and the server.
+      LANG: C.UTF-8
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U duitakuh -d duitakuh"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db_data:
