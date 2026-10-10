@@ -6,15 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Web pencatatan keuangan pribadi berbasis AI, for Indonesian users (IDR, Bahasa Indonesia, Asia/Jakarta).
 
-Requirements: `PRD_Keuangan_AI_Web_v1.docx` (v1.1) at the repo root is the source of truth; **`docs/PRD.md` is a readable/greppable text mirror of it** — read the mirror, and re-generate it if the .docx changes. The PRD defines FR01–FR15 and AC01–AC14; cite those IDs when implementing or testing.
+Requirements: **`docs/PRD.md` (v1.3) is the source of truth.** It defines FR01–FR18 and AC01–AC22 — cite those IDs when implementing or testing. The `PRD_Keuangan_AI_Web_v1.docx` still at the repo root is the superseded **v1.1** and should not be read; v1.3 adds the AI service spec (section 13) and the PWA/mobile mandate (section 12).
 
-**The product is chat-first.** One persistent conversation is the main surface and must be able to start _and finish_ every feature in a release (FR14). The dashboard is a companion view over the same data, not the primary UI. The current codebase does not reflect this yet — see "Current state vs. the PRD".
+**The product is chat-first and mobile-first.** One persistent conversation is the main surface and must be able to start _and finish_ every feature in a release (FR14). The dashboard is a companion view over the same data, not the primary UI. A mobile-first **PWA is mandatory for MVP** (FR16) with bottom tabs Chat / Ringkasan / Data; phone is the primary device, desktop merely supported. The current codebase reflects none of this yet — see "Current state vs. the PRD".
 
 The codebase is the **Minimal UI v7.7.0 `starter-next-js`** template (commercial MUI admin kit), copied to the repo root and renamed to `duit-akuh` (the PRD leaves the product name undecided). It is a starter: the dashboard pages are intentionally blank placeholders (`BlankView`) waiting to be replaced with real features.
 
 ## Domain invariants (from the PRD)
 
-These are correctness rules, not preferences. Most of AC01–AC14 exist to catch violations of them.
+These are correctness rules, not preferences. Most of AC01–AC22 exist to catch violations of them.
 
 - **Never use floating point for money.** Store integer rupiah or fixed-precision decimal (FR03).
 - **Money must never be double-counted.** Transfers, top-ups and cash withdrawals are one atomic two-sided transaction and are _neither_ income nor expense; admin fees are a separate expense (FR02/AC02). Credit-card spending is an expense at purchase time and increases card debt — paying the bill reduces bank balance and debt but must **not** re-count the expense (AC03). Opening balance is not income (AC01).
@@ -26,7 +26,49 @@ These are correctness rules, not preferences. Most of AC01–AC14 exist to catch
 - **Simulations never mutate real data** until the user explicitly applies the plan (FR11/AC07).
 - **The LLM never computes money.** It proposes structured tool calls; the backend authorizes, validates and computes via tested functions. Receipt/statement content is data, never instructions (FR06 "Batas dan mekanisme AI").
 - **Hard isolation per owner.** Every API enforces per-owner authorization; zero cross-account access is a release gate (AC08).
+- **AI tools only draft or read — they never post.** Posting happens solely through the confirmation endpoint carrying an operation ID (FR05, §13).
+- **Secrets never reach the client.** The PWA calls only our backend; the backend holds the LLM API key and Cloudflare Access tokens. A network inspection of the PWA must never reveal them (AC21).
 - Never send full card numbers, PINs, bank OTPs or banking credentials to a model.
+
+## AI service (PRD §13)
+
+Self-hosted on the owner's own `lumi-ai` server, exposed via Cloudflare Tunnel. **No third-party AI provider** — user text, receipts and audio stay on that server, which is also the stated privacy guarantee.
+
+| Function                        | Model                                  | Endpoint                                             | Auth                                              |
+| ------------------------------- | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------- |
+| Chat, tool calling, receipt OCR | `qwen3.5-9b` (vLLM, OpenAI-compatible) | `https://llm.lumicore.co.id/v1`                      | `Authorization: Bearer <key>`                     |
+| Speech-to-text                  | WhisperX `large-v3`                    | `https://stt.lumicore.co.id/v1/audio/transcriptions` | `CF-Access-Client-Id` + `CF-Access-Client-Secret` |
+| Fallback chat/vision            | `qwen2.5vl:7b`, `gemma4:12b` (Ollama)  | LAN `:11434`                                         | internal only                                     |
+
+Both are OpenAI-compatible, so an OpenAI SDK pointed at these base URLs works. Build behind an adapter exposing `chat` / `vision` / `transcribe` so the backup or a cloud model can be swapped in; switching to cloud triggers a privacy notice.
+
+Constraints that shape the design:
+
+- **24,576 token context** (prompt + output) — summarize chat history, keep tool schemas terse, and remember one image eats a lot of it.
+- **Max 1 image per request**, no video. Multi-photo receipts are processed one at a time and merged in the backend.
+- **16 parallel requests** server-wide, shared with other apps — the backend needs a queue and per-user rate limiting.
+- **Cloudflare: response must start within 100s** (else 524) and uploads cap at 100 MB. **Stream chat responses.** Voice messages cap at ~5 minutes.
+- `chat_template_kwargs.enable_thinking=false` by default for transaction drafts and receipt extraction (faster); may be enabled for analysis and simulation explanations.
+- `response_format: {"type":"json_object"}` is supported — use it for receipt extraction and drafts, with `temperature: 0`.
+- Before sending a receipt photo: downscale to ~1600 px on the long edge, JPEG ~80%, and **strip EXIF/location**.
+- `lumi-ai` is a dev box with no SLA or failover — a single point of failure. Every AI path needs a clear failure state with manual entry still working (AC09/AC22); at most one automatic retry, never an auto-post.
+- The backend must log AI requests (owner, operation ID, kind, model, token usage, latency, status, tool calls) while keeping keys, card numbers, PINs and OTPs out of logs.
+
+The MVP tool contract is tabulated in §13 (`get_accounts`, `get_balance`, `get_summary`, `find_transactions`, `run_simulation` need no confirmation; every `propose_*` does).
+
+## Mobile/PWA requirements (PRD §12, FR16–FR18)
+
+Mandatory for MVP, verified by AC15–AC18:
+
+- Manifest, 192/512 + maskable icons, start URL, scope, `display: standalone`, HTTPS. Install prompt where available; iOS gets Share → Add to Home Screen guidance.
+- **Service worker caches static shell assets only — never finance or chat APIs.** Offline must not fake success: drafts survive in-session marked unsaved, with no auto-post on reconnect.
+- Single column, no horizontal page scroll at **320–430 CSS px**; portrait and landscape; respect notch/home-indicator safe areas.
+- Composer stays above the keyboard without covering messages or confirmations; height follows the dynamic viewport; scroll position and drafts survive panel opens and backgrounding.
+- Touch targets ≥ **44×44 CSS px**; body text and inputs ≥ **16 CSS px**; zoom not blocked.
+- Lists render as cards, wide tables become stacked detail, long detail uses bottom sheets or full-screen panels.
+- Charts must work via tap with labels and numeric summaries — never hover-only or color-only.
+- Support screen readers, contrast and reduced motion.
+- Chat shell targets **LCP ≤ 2.5s, CLS ≤ 0.1** on a documented 4G mobile profile (AI latency measured separately).
 
 ## Commands
 
@@ -137,14 +179,25 @@ Path alias: `src/...` resolves from the repo root via `jsconfig.json` `baseUrl: 
 
 ## Current state vs. the PRD
 
-The repo is currently **frontend scaffolding only**. Nothing in the PRD's domain is implemented yet. Known gaps, in the PRD's own suggested build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
+The repo is currently **frontend scaffolding only** — a themed Next.js shell. Nothing in the PRD's domain is implemented yet.
 
-- **No backend, no database, no ledger.** The PRD suggests Next.js + FastAPI + PostgreSQL + Docker Compose but explicitly leaves the framework decision open. Nothing has been chosen or built.
-- **No chat surface.** `/` currently redirects to `/dashboard`, and the dashboard is the only layout. A chat-first app needs chat as the default route and mobile tab.
+Stack decisions already made (2026-10-10):
+
+- **Backend: FastAPI + PostgreSQL**, per the PRD's recommendation — a separate service from this Next.js app. Not yet created.
+- **Auth: own email + password** (needs argon2/bcrypt hashing plus login attempt rate limiting per §9). The template's sign-in/sign-up views exist and can be reused.
+- **AI: the self-hosted `lumi-ai` service** described above, behind a swappable adapter.
+
+Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
+
+- **No backend, no database, no ledger.** FastAPI service, schema, money type and posting engine all still to be built.
+- **No chat surface.** `/` redirects to `/dashboard` and the dashboard is the only layout — the exact inverse of FR14. Needs chat as the default route plus the Chat/Ringkasan/Data bottom tabs.
+- **Not a PWA.** No manifest, no icons, no service worker (FR16).
 - **Auth points at the vendor demo API** (see `CONFIG` below) and must be replaced before any real data exists.
-- **No AI provider.** The PRD requires an adapter layer so the provider can be swapped; nothing is wired.
-- **Charts are not installed** — see the reference-template note below.
-- **No test runner**, while AC01–AC14 are concrete, checkable scenarios that want automated coverage. The ledger invariants above are exactly the kind of logic that needs tests before features pile on top.
+- **No AI adapter.** Nothing calls `lumi-ai` yet.
+- **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
+- **No test runner**, while AC01–AC22 are concrete, checkable scenarios. The ledger invariants above are exactly the logic that needs tests before features pile on top.
+
+Current milestone: **restructure the UI to chat-first** (the user's choice over starting with the ledger), which means the chat shell, mobile layout and PWA groundwork land before real data exists — so expect mock/stubbed data in this phase, and keep the seams clean for the FastAPI backend.
 
 ## Reference template (`_reference/`, gitignored)
 
