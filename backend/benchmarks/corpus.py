@@ -1030,11 +1030,12 @@ EVERYDAY = [
     Case(
         "evd-19",
         "besok aku mau belanja 500rb, catat sekarang",
-        "draft",
-        "expense",
-        500_000,
-        date=None,
-        probes="future-dated on purpose",
+        # Expects a refusal, and that is a correction to my own
+        # expectation. Recording tomorrow's purchase today would make
+        # today's balance wrong - the money has not left. The model
+        # declining is better behaviour than what I first asked for.
+        "refuse",
+        probes="a planned purchase is not a transaction yet",
         tags=("date",),
     ),
     Case(

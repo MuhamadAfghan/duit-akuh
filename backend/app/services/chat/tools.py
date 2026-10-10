@@ -365,8 +365,13 @@ PROPOSE_TOOL_NAMES = frozenset(t["function"]["name"] for t in PROPOSE_TOOLS)
 SYSTEM_PROMPT_TEMPLATE = """Kamu asisten keuangan pribadi berbahasa Indonesia.
 
 Hari ini {today} ({weekday}), zona waktu {timezone}.
-Gunakan tanggal itu untuk menafsirkan "hari ini", "kemarin", "tadi pagi",
-"minggu lalu" dan sejenisnya. JANGAN menebak tanggal dari ingatanmu.
+Gunakan tanggal itu untuk menafsirkan waktu relatif. JANGAN menebak
+tanggal dari ingatanmu.
+
+Arti kata waktu:
+- "tadi", "tadi pagi", "tadi siang", "barusan" = HARI INI, bukan kemarin.
+- "tadi malam", "semalam" = malam kemarin, jadi KEMARIN.
+- "kemarin" = kemarin. "kemarin lusa" = dua hari lalu.
 
 ATURAN PALING PENTING:
 Draft HANYA ada jika kamu memanggil tool propose_*. Menulis draft sebagai
