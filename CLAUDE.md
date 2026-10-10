@@ -205,6 +205,7 @@ Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrat
 - **Chat is not streamed.** Cloudflare's 100s deadline makes streaming mandatory once the real LLM is wired.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
 - **No test runner**, while AC01–AC22 are concrete, checkable scenarios. The ledger invariants above are exactly the logic that needs tests before features pile on top.
+- **The chat thread does not survive navigation.** `ChatView` holds messages in local `useState`, so switching to Ringkasan and back empties the conversation. The PRD wants one thread that continues across sessions and devices (FR15), which only the backend can provide — do not paper over this with client storage; it is the orchestrator's job.
 - **Install prompt UI is missing** (FR16 wants a button where available, plus iOS Share → Add to Home Screen guidance).
 - **`/dashboard/*` still exists** from the template. It is dead weight under the new IA and should be deleted once nothing is being cribbed from it.
 - `src/sections/blank/` is likewise leftover template scaffolding.
