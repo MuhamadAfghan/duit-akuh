@@ -62,3 +62,6 @@ backend/__pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+
+# Generated with a real (dev) password in it
+backend/setup-db.sql
