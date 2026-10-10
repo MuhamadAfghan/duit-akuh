@@ -50,6 +50,16 @@ cp -p "$BASE/shared/htaccess" "$BASE/app.new/public/.htaccess"
 # static files from public/ before handing the request to Node.
 rm -f "$BASE/app.new/public/index.html"
 
+# tar records the mode of the directory the archive was built from, and
+# `mktemp -d` on the runner is 0700 — so the unpacked app root inherits
+# 0700, which LiteSpeed cannot traverse. It then answers 404 without
+# logging why, and the app looks dead while being perfectly healthy.
+# Normalise directories rather than trusting the archive; file modes are
+# left alone so nothing inside node_modules loses its executable bit.
+chmod 755 "$BASE/app.new"
+find "$BASE/app.new" -type d -exec chmod 755 {} +
+find "$BASE/app.new" -type f -exec chmod a+r {} +
+
 log "Swap rilis"
 rm -rf "$BASE/app.old"
 mv "$APPROOT" "$BASE/app.old"

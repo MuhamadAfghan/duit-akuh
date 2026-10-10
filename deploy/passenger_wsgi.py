@@ -1,19 +1,27 @@
-"""Passenger entry point for the FastAPI backend on cPanel.
+"""WSGI entry point for the FastAPI backend on cPanel.
 
-cPanel's Python Selector runs apps through Phusion Passenger, which
-speaks WSGI. FastAPI is ASGI, so the app is wrapped rather than served
-by uvicorn. Passenger looks for a module-level ``application``.
+cPanel's Python Selector runs the app under LiteSpeed's ``lswsgi``, which
+speaks WSGI. FastAPI is ASGI, so the app is bridged rather than served by
+uvicorn. The runner looks for a module-level ``application``.
 
-Two things are deliberate:
+Three things here are load-bearing, and each one cost a debugging session:
 
-* The environment is read from ``shared/.env`` before ``app`` is
-  imported. ``app.config`` calls ``_require("DATABASE_URL")`` at import
-  time, so anything missing has to be in place first, and keeping the
-  values in a file outside the release means a deploy never rewrites
-  secrets (AC21: the LLM key and Cloudflare tokens live only here).
-* ``a2wsgi`` streams. The chat endpoint returns NDJSON a line at a time,
-  and a bridge that buffered would turn a streamed reply into a single
-  blob at the end.
+* **The bridge is built lazily, on the first request.** ``a2wsgi`` starts
+  an event loop on a background thread when the middleware is
+  constructed. ``lswsgi`` imports this module in a master process and
+  then *forks* workers, and threads do not survive ``fork()`` — so a
+  bridge built at import time leaves every worker waiting on a queue
+  nobody is servicing, and requests hang until the gateway times out
+  with no error in the log. Building it inside ``application()`` means it
+  is created in the worker that will use it.
+* **The environment is read before ``app`` is imported.** ``app.config``
+  calls ``_require("DATABASE_URL")`` at import, so the values have to be
+  in place first. Keeping them in ``shared/.env`` means a deploy never
+  rewrites secrets (AC21: the LLM key and Cloudflare tokens live only
+  there).
+* **a2wsgi streams.** The chat endpoint returns NDJSON a line at a time,
+  and a bridge that buffered would turn a streamed reply into one blob at
+  the end.
 """
 
 from __future__ import annotations
@@ -33,7 +41,7 @@ def _load_env(path: Path) -> None:
     """Minimal .env reader.
 
     Avoids a python-dotenv dependency for ~15 lines, and uses
-    ``setdefault`` so a value already exported by Passenger's own
+    ``setdefault`` so a value already exported by the selector's own
     env-vars config wins over the file.
     """
     try:
@@ -54,8 +62,17 @@ def _load_env(path: Path) -> None:
 
 _load_env(_HERE / ".env")
 
-from a2wsgi import ASGIMiddleware  # noqa: E402  (needs the env loaded first)
+_bridge = None
 
-from app.main import app as _asgi_app  # noqa: E402
 
-application = ASGIMiddleware(_asgi_app)
+def application(environ, start_response):
+    """WSGI callable. Builds the ASGI bridge on first use — see above."""
+    global _bridge
+
+    if _bridge is None:
+        from a2wsgi import ASGIMiddleware
+        from app.main import app as asgi_app
+
+        _bridge = ASGIMiddleware(asgi_app)
+
+    return _bridge(environ, start_response)

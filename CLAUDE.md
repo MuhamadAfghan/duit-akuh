@@ -335,6 +335,18 @@ Constraints that shaped the deploy scripts, all verified on the box:
 - **Secrets live only in `shared/.env`** (mode 600, outside every release,
   never rewritten by a deploy). The LLM key and Cloudflare Access tokens
   are there and nowhere else — not in GitHub (AC21).
+- **The app root must be traversable by LiteSpeed (0755).** `tar` records
+  the mode of the directory the archive was built from, and `mktemp -d` is
+  0700, so an unpacked release inherits 0700 — which LiteSpeed answers
+  with a bare 404, no log line, no hint. The activate scripts normalise
+  directory modes after unpacking.
+- **The ASGI bridge must be built lazily, inside `application()`.** Python
+  apps run under LiteSpeed's `lswsgi`, which imports the module in a
+  master process and then forks workers. `a2wsgi` starts an event loop on
+  a background thread when constructed, and threads do not survive
+  `fork()`, so a bridge built at import time makes every request hang
+  until the gateway gives up — with nothing in `stderr.log`. See
+  `deploy/passenger_wsgi.py`.
 - **A smoke test cannot just check for HTTP 200.** The public edge answers
   non-browser clients with an Imunify360 "One moment, please..."
   interstitial that *is* a 200, so the scripts match on body content —
