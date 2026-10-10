@@ -251,11 +251,36 @@ Balances stay out of this endpoint. A balance is a point in time, not a
 range, and putting both in one response invites reading a month's
 spending as if it were a balance.
 
+## Goals and allocations (FR07, AC05, AC06)
+
+An allocation is an **earmark on money already in an account**. It writes
+no ledger entry, so it cannot change net assets — AC05 holds
+structurally, not by a check. What does need checking is over-promising:
+the total earmarked on an account may not exceed its positive balance,
+and moving an earmark between goals is explicitly not a transfer.
+
+`app/domain/goals.py` holds the arithmetic, pure:
+
+- The required deposit is **ceiling-divided**. Three deposits of 3,333 do
+  not reach 10,000; being slightly early beats being short on the
+  deadline.
+- An overdue goal returns `needs_adjustment` with `per_deposit: null`
+  rather than dividing by zero or inventing a schedule.
+- Progress caps at 100 and any excess is reported as `surplus`, because a
+  bar past full says nothing.
+- `split_capacity_by_priority` never recommends more in total than the
+  user can save; later goals get what is left, not what they asked for.
+
+`GET /goals/{id}/plan?capacity=…` answers FR11. The PRD's worked example
+runs exactly: a Rp15,000,000 goal with Rp3,000,000 saved over six
+deposits needs Rp2,000,000 each, and a capacity of Rp1,500,000 offers
+eight deposits, Rp3,000,000 more up front, or Rp500,000 more per period.
+
 ## Not built yet
 
-- **Goals, budgets, simulation.** The `Goal` and `Allocation` tables and the
-  allocation rule exist; the services on top do not. Their tools are
-  withheld from the model until they do.
+- **Budgets and simulation** (FR08, FR10–FR12).
+- **Deposit schedules.** Goals carry a target date but no deposit dates,
+  so `remaining_deposits` is supplied by the caller rather than derived.
 - **Voice and receipt OCR** (stage 2). The adapter has `vision` and
   `transcribe` in its interface but no implementation.
 - **Per-user rate limiting and a queue.** `lumi-ai` allows 16 parallel

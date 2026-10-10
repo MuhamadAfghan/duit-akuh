@@ -665,3 +665,123 @@ def test_an_ordinary_answer_does_not_trigger_a_retry(chat):
 
     assert len(chat.adapter.calls) == 2, "no corrective round for a normal answer"
     assert "1.000.000" in result["reply"]
+
+
+# ----------------------------------------------------------------------
+# Goals through chat (FR07, AC05)
+# ----------------------------------------------------------------------
+
+
+def test_creating_a_goal_through_chat_needs_confirmation(chat):
+    chat.adapter.queue(
+        tool("propose_goal", {"name": "Laptop", "target_amount": 15_000_000})
+    )
+    chat.adapter.queue(text("Ini draft targetnya."))
+
+    result = send(chat, "bikin target laptop 15 juta")
+
+    assert len(result["drafts"]) == 1
+    assert chat.get("/goals").json() == [], "nothing saved before confirmation"
+
+    chat.post(f"/chat/drafts/{result['drafts'][0]['id']}/confirm").raise_for_status()
+
+    goals = chat.get("/goals").json()
+    assert len(goals) == 1
+    assert goals[0]["name"] == "Laptop"
+    assert goals[0]["target_amount"] == 15_000_000
+
+
+def test_allocating_through_chat_does_not_create_money(chat):
+    """AC05 again, this time via the conversational path."""
+    make_account(chat, "BCA", balance=5_000_000, alias="bca")
+    chat.post("/goals", json={"name": "Laptop", "target_amount": 15_000_000}).raise_for_status()
+
+    before = chat.get("/summary").json()
+
+    chat.adapter.queue(
+        tool(
+            "propose_allocation",
+            {"goal_name": "Laptop", "account": "bca", "amount": 2_000_000},
+        )
+    )
+    chat.adapter.queue(text("Ini draft alokasinya."))
+    draft = send(chat, "alokasikan 2 juta dari bca ke laptop")["drafts"][0]
+
+    assert chat.get("/summary").json()["allocated"] == 0, "not saved yet"
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    after = chat.get("/summary").json()
+
+    assert after["liquid"] == before["liquid"] == 5_000_000
+    assert after["net_worth"] == before["net_worth"]
+    assert after["allocated"] == 2_000_000
+    assert after["free_to_spend"] == 3_000_000
+
+
+def test_an_allocation_above_the_balance_never_becomes_a_draft(chat):
+    """Validated while drafting, so the card cannot promise the impossible."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    chat.post("/goals", json={"name": "Laptop", "target_amount": 15_000_000}).raise_for_status()
+
+    chat.adapter.queue(
+        tool(
+            "propose_allocation",
+            {"goal_name": "Laptop", "account": "bca", "amount": 5_000_000},
+        )
+    )
+    chat.adapter.queue(text("Saldonya tidak cukup."))
+
+    result = send(chat, "alokasikan 5 juta ke laptop")
+
+    assert result["drafts"] == []
+    error = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
+    assert "1000000" in error["content"], "tells the model the real headroom"
+
+
+def test_an_ambiguous_goal_name_asks_rather_than_guessing(chat):
+    make_account(chat, "BCA", balance=5_000_000, alias="bca")
+    for name in ("Laptop Kerja", "Laptop Gaming"):
+        chat.post("/goals", json={"name": name, "target_amount": 10_000_000}).raise_for_status()
+
+    chat.adapter.queue(
+        tool(
+            "propose_allocation",
+            {"goal_name": "Laptop", "account": "bca", "amount": 1_000_000},
+        )
+    )
+    chat.adapter.queue(text("Laptop yang mana?"))
+
+    result = send(chat, "alokasikan 1 juta ke laptop")
+
+    assert result["drafts"] == []
+    error = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
+    assert "Laptop Kerja" in error["content"]
+    assert "Laptop Gaming" in error["content"]
+
+
+def test_a_draft_goes_stale_when_the_balance_moves_underneath_it(chat):
+    """FR15: a card must not post something its preview no longer describes."""
+    account_id = make_account(chat, "BCA", balance=3_000_000, alias="bca")["id"]
+    chat.post("/goals", json={"name": "Laptop", "target_amount": 15_000_000}).raise_for_status()
+
+    chat.adapter.queue(
+        tool(
+            "propose_allocation",
+            {"goal_name": "Laptop", "account": "bca", "amount": 3_000_000},
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+    draft = send(chat, "alokasikan 3 juta ke laptop")["drafts"][0]
+
+    # Spend most of it before confirming.
+    chat.post(
+        "/transactions",
+        headers={"Idempotency-Key": f"spend-{uuid.uuid4()}"},
+        json={"type": "expense", "amount": 2_500_000, "from_account_id": account_id},
+    ).raise_for_status()
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/confirm")
+
+    assert response.status_code == 409
+    assert chat.get("/summary").json()["allocated"] == 0

@@ -205,7 +205,7 @@ Built so far — the chat-first shell:
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
-- **Goals, budgets and simulation** have tables and rules but no services, so their tools are withheld from the model.
+- **Budgets and simulation** (FR08, FR10–FR12) have no services yet, so their tools stay withheld from the model.
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Chat is not streamed to the browser.** The backend adapter streams from vLLM (required: Cloudflare 524s past 100s), but `/chat/messages` returns one complete turn.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.

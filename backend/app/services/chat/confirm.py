@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from ...api.schemas import Draft as DraftSchema
+from ...domain.errors import AllocationExceedsBalance
 from ...domain.ledger import Leg, build_reversal
 from ...models import (
     AccountType,
@@ -31,6 +32,7 @@ from ...models import (
 )
 from ..accounts import open_account_with_balance
 from ..drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
+from ..goals import allocate, create_goal
 from ..posting import post_transaction
 
 
@@ -48,6 +50,12 @@ def confirm_draft(db: DbSession, *, user_id: uuid.UUID, draft: Draft) -> dict:
 
     if draft.kind == "reversal":
         return _confirm_reversal(db, user_id, draft)
+
+    if draft.kind == "goal":
+        return _confirm_goal(db, user_id, draft)
+
+    if draft.kind == "allocation":
+        return _confirm_allocation(db, user_id, draft)
 
     return _confirm_transaction(db, user_id, draft)
 
@@ -101,6 +109,53 @@ def _confirm_account(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
     db.flush()
 
     return {"draft_id": str(draft.id), "account_id": str(account.id), "replayed": False}
+
+
+def _confirm_goal(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
+    payload = draft.payload
+    target_date = payload.get("target_date")
+
+    goal = create_goal(
+        db,
+        user_id=user_id,
+        name=payload["name"],
+        target_amount=payload["target_amount"],
+        target_date=datetime.fromisoformat(target_date) if target_date else None,
+        priority=payload.get("priority", 0),
+    )
+
+    draft.status = DraftStatus.CONFIRMED
+    db.flush()
+
+    return {"draft_id": str(draft.id), "goal_id": str(goal.id), "replayed": False}
+
+
+def _confirm_allocation(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
+    payload = draft.payload
+
+    try:
+        allocation = allocate(
+            db,
+            user_id=user_id,
+            goal_id=uuid.UUID(payload["goal_id"]),
+            account_id=uuid.UUID(payload["account_id"]),
+            amount=payload["amount"],
+        )
+    except AllocationExceedsBalance as exc:
+        # The balance moved between drafting and confirming, so the card
+        # no longer describes what would happen (FR15).
+        draft.status = DraftStatus.STALE
+        db.flush()
+        raise DraftNotPending(str(exc)) from exc
+
+    draft.status = DraftStatus.CONFIRMED
+    db.flush()
+
+    return {
+        "draft_id": str(draft.id),
+        "allocation_id": str(allocation.id),
+        "replayed": False,
+    }
 
 
 def _confirm_reversal(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:

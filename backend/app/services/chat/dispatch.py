@@ -16,7 +16,7 @@ import uuid
 from datetime import date, datetime, time, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
 from ...domain.balances import (
@@ -36,12 +36,14 @@ from ...models import (
     Allocation,
     Draft,
     DraftStatus,
+    Goal,
     Transaction,
     User,
 )
 from ...money import MoneyError, positive_rupiah, rupiah
 from ..accounts import resolve_account
 from ..drafts import build_legs
+from ..goals import headroom, saved_for
 from ..posting import account_snapshots
 from ..reporting import category_total_for_period, known_expense_categories, period_report
 
@@ -178,6 +180,25 @@ def tool_get_spending(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
         "income_total": report.income_total,
         "categories": [{"name": c.name, "amount": c.amount} for c in report.categories],
         "transaction_count": report.transaction_count,
+    }
+
+
+def tool_get_goals(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    rows = db.scalars(
+        select(Goal).where(Goal.user_id == user_id).order_by(Goal.priority, Goal.name)
+    ).all()
+
+    return {
+        "goals": [
+            {
+                "name": g.name,
+                "target": g.target_amount,
+                "saved": saved_for(db, user_id, g.id),
+                "shortfall": max(0, g.target_amount - saved_for(db, user_id, g.id)),
+                "status": g.status,
+            }
+            for g in rows
+        ]
     }
 
 
@@ -370,6 +391,112 @@ def tool_propose_account_change(db: DbSession, user_id: uuid.UUID, args: dict) -
     }
 
 
+def _resolve_goal(db: DbSession, user_id: uuid.UUID, name: str) -> Goal:
+    """Find one goal by name, refusing to guess between several.
+
+    Same rule as accounts: an ambiguous reference must produce a
+    question, not a choice made on the user's behalf (AC04).
+    """
+    needle = name.strip().lower()
+
+    matches = list(
+        db.scalars(
+            select(Goal).where(Goal.user_id == user_id, func.lower(Goal.name).contains(needle))
+        ).all()
+    )
+
+    if not matches:
+        raise ToolError(f"Tidak ada target bernama '{name}'")
+
+    if len(matches) > 1:
+        raise ToolError(
+            f"'{name}' cocok dengan {len(matches)} target: "
+            + ", ".join(g.name for g in matches)
+            + ". Pilih salah satu."
+        )
+
+    return matches[0]
+
+
+def tool_propose_goal(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    name = _require_str(args, "name")
+
+    try:
+        target = positive_rupiah(args.get("target_amount"))
+    except MoneyError as exc:
+        raise ToolError(str(exc)) from exc
+
+    target_date = _parse_occurred_at(args.get("target_date"))
+    priority = args.get("priority", 0)
+
+    if not isinstance(priority, int) or isinstance(priority, bool) or not 0 <= priority <= 100:
+        priority = 0
+
+    payload = {
+        "name": name,
+        "target_amount": target,
+        "priority": priority,
+    }
+
+    if target_date:
+        payload["target_date"] = target_date.isoformat()
+
+    draft = _store_draft(db, user_id=user_id, kind="goal", payload=payload, impact=None)
+
+    return {
+        "draft_id": str(draft.id),
+        "operation_id": draft.operation_id,
+        "saved": False,
+        "note": "Menunggu konfirmasi pengguna",
+    }
+
+
+def tool_propose_allocation(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    goal = _resolve_goal(db, user_id, _require_str(args, "goal_name"))
+    account = _resolve(db, user_id, _require_str(args, "account"))
+
+    try:
+        amount = positive_rupiah(args.get("amount"))
+    except MoneyError as exc:
+        raise ToolError(str(exc)) from exc
+
+    # Validate now, while a draft is being built, so the card never
+    # offers something that will fail on confirmation (AC05).
+    free = headroom(db, user_id, account.id)
+
+    if amount > free:
+        raise ToolError(f"Sisa yang bisa dialokasikan dari '{account.name}' hanya {free}.")
+
+    payload = {
+        "goal_id": str(goal.id),
+        "account_id": str(account.id),
+        "amount": amount,
+    }
+
+    already = saved_for(db, user_id, goal.id)
+
+    return {
+        "draft_id": str(
+            _store_draft(
+                db,
+                user_id=user_id,
+                kind="allocation",
+                payload=payload,
+                impact=[
+                    {
+                        "account": f"Target {goal.name}",
+                        "before": already,
+                        "after": already + amount,
+                        "delta": amount,
+                    }
+                ],
+            ).id
+        ),
+        "saved": False,
+        "note": ("Menunggu konfirmasi. Alokasi tidak memindahkan uang dan tidak menambah aset."),
+    }
+
+
 def tool_propose_correction(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
     raw_id = _require_str(args, "transaction_id")
 
@@ -423,7 +550,10 @@ HANDLERS = {
     "get_spending": tool_get_spending,
     "find_transactions": tool_find_transactions,
     "propose_transactions": tool_propose_transactions,
+    "get_goals": tool_get_goals,
     "propose_account_change": tool_propose_account_change,
+    "propose_goal": tool_propose_goal,
+    "propose_allocation": tool_propose_allocation,
     "propose_correction": tool_propose_correction,
 }
 

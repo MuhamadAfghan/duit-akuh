@@ -127,6 +127,11 @@ export const accountsApi = {
   summary: () => api.get('/summary'),
 };
 
+export const goalsApi = {
+  /** `remainingDeposits` drives the per-deposit figure; 0 means unscheduled. */
+  list: (remainingDeposits = 0) => api.get(`/goals?remaining_deposits=${remainingDeposits}`),
+};
+
 export const reportsApi = {
   /** Period keywords the backend accepts: hari_ini, minggu_ini, bulan_ini, … */
   spending: (period = 'bulan_ini') => api.get(`/reports/spending?period=${period}`),

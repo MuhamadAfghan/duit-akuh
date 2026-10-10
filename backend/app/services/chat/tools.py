@@ -84,6 +84,14 @@ READ_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "get_goals",
+            "description": ("Daftar target tabungan beserta dana terkumpul dan kekurangannya."),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_transactions",
             "description": (
                 "Daftar transaksi TERBARU (bukan hasil pencarian per kata kunci "
@@ -174,6 +182,52 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                     "credit_limit": dict(_AMOUNT, description="Khusus kartu kredit"),
                 },
                 "required": ["name", "account_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_goal",
+            "description": (
+                "Buat draft target tabungan baru. TIDAK menyimpan apa pun; "
+                "pengguna harus mengonfirmasi."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "target_amount": _AMOUNT,
+                    "target_date": {
+                        "type": "string",
+                        "description": "Opsional, YYYY-MM-DD",
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "description": "0 paling penting; default 0",
+                    },
+                },
+                "required": ["name", "target_amount"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_allocation",
+            "description": (
+                "Buat draft alokasi dana dari sebuah kantong ke sebuah target. "
+                "Alokasi TIDAK memindahkan uang dan tidak menambah aset - hanya "
+                "menandai saldo yang sudah ada. Tidak boleh melebihi saldo kantong."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_name": {"type": "string"},
+                    "account": _ACCOUNT,
+                    "amount": _AMOUNT,
+                },
+                "required": ["goal_name", "account", "amount"],
             },
         },
     },
