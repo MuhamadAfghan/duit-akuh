@@ -63,8 +63,7 @@ cloudlinux-selector restart --json --interpreter nodejs \
 log "Smoke test: https://$SMOKE_HOST/"
 BODY=""
 for _ in 1 2 3 4 5 6 7 8; do
-    BODY="$(curl -k -sS -m 45 --resolve "$SMOKE_HOST:443:127.0.0.1" \
-        "https://$SMOKE_HOST/" 2>/dev/null || true)"
+    BODY="$(curl -sS -m 45 "https://$SMOKE_HOST/" 2>/dev/null || true)"
     case "$BODY" in *'/_next/'*) break ;; esac
     sleep 5
 done

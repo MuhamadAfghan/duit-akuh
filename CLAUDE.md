@@ -337,9 +337,10 @@ Constraints that shaped the deploy scripts, all verified on the box:
   are there and nowhere else — not in GitHub (AC21).
 - **A smoke test cannot just check for HTTP 200.** The public edge answers
   non-browser clients with an Imunify360 "One moment, please..."
-  interstitial that *is* a 200, so the scripts probe over loopback TLS
-  (`curl --resolve host:443:127.0.0.1`) and match on body content —
-  `"status":"ok"` for the API, a `/_next/` asset for the web app.
+  interstitial that *is* a 200, so the scripts match on body content —
+  `"status":"ok"` for the API, a `/_next/` asset for the web app. They run
+  from the server over plain DNS; see "Verifying a deploy" below for the
+  loopback trap that makes any other probe lie.
 
 ```sh
 # deploy: push to main, or Actions -> "Deploy ke cPanel" -> Run workflow
@@ -349,28 +350,30 @@ ssh duitakuh 'bash -s' -- web < deploy/rollback.sh
 
 Rollback does **not** revert migrations, by design.
 
-### Open blocker: the vhosts are not live
+### Verifying a deploy
 
-Both subdomains exist and are configured correctly in cPanel — userdata,
-documentroot, DNS A records and AutoSSL all present — but **LiteSpeed has
-never been given a config rebuild**, so every request falls through to
-`/cgi-sys/defaultwebpage.cgi` and no per-domain access log is ever
-created. Jagoan support has to run `/scripts/rebuildhttpdconf` and restart
-LiteSpeed; there is no user-level equivalent (`multiphp` is not available,
-and deleting + re-adding the subdomain does not trigger one either).
+Both subdomains are live and served by Passenger. Two things make this
+host easy to misdiagnose, and between them they once produced a thoroughly
+convincing false negative:
 
-Everything on this side of that boundary is verified: migrations apply to
-MariaDB, the suite passes against it, and `passenger_wsgi.py` returns
-`{"status":"ok"}` when driven as a WSGI callable directly. What is *not*
-yet proven is the webserver handing a request to Passenger, which is
-precisely what the rebuild unblocks — so expect the first real run to be
-the first test of Next-under-Passenger.
+- **The box does not listen on 127.0.0.1.** It answers on `101.50.1.81`,
+  so `curl --resolve host:443:127.0.0.1` lands on a default vhost and
+  returns `/cgi-sys/defaultwebpage.cgi` no matter how healthy the app is.
+  Never use a loopback probe here.
+- **The Imunify360 edge answers non-browser clients** with a "One moment,
+  please..." interstitial that is *itself* HTTP 200, so a status-code
+  check passes against a dead app. Requests made *from the server* skip
+  the interstitial.
 
-Diagnosing this again: the public edge returns HTTP 200 with an
-Imunify360 interstitial even when nothing is running, so check the two
-signals that cannot lie — a loopback probe
-(`curl -k --resolve host:443:127.0.0.1 https://host/`) and whether
-`~/access-logs/<domain>` exists.
+So: probe from the server over ordinary DNS, and match on the body, which
+is what the activate scripts do.
+
+```sh
+ssh duitakuh 'curl -sS https://api-finance.rswicentral.my.id/health'   # {"status":"ok",...}
+ssh duitakuh 'curl -sS https://finance.rswicentral.my.id/ | head'      # must contain /_next/
+```
+
+`~/<domain>/app/stderr.log` is where Passenger writes a failed boot.
 
 `agann.my.id` was dropped deliberately (2026-10-10). It is registered to a
 different cPanel account on this server, so cPanel refused the subdomains

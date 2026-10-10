@@ -70,7 +70,7 @@ cloudlinux-selector restart --json --interpreter "$INTERP" --app-root "$APP_DIR/
 
 log "Health: https://$HOST$PROBE"
 for _ in 1 2 3 4 5 6; do
-    BODY="$(curl -k -sS -m 45 --resolve "$HOST:443:127.0.0.1" "https://$HOST$PROBE" 2>/dev/null || true)"
+    BODY="$(curl -sS -m 45 "https://$HOST$PROBE" 2>/dev/null || true)"
     case "$BODY" in *"$MARKER"*) echo "OK"; exit 0 ;; esac
     sleep 5
 done

@@ -16,10 +16,15 @@
 #     symlink would bake the release name into the config and into the
 #     virtualenv path. Releases are therefore swapped by moving directories.
 #   - Restart is `touch tmp/restart.txt`; the selector CLI is a fallback.
-#   - Smoke tests go over loopback TLS with --resolve, because the public
-#     edge answers non-browser clients with an Imunify360 interstitial that
-#     is itself HTTP 200. Checking the status code alone would pass while
-#     the app was down, so the body is matched too.
+#   - Smoke tests run from the server over ordinary DNS. Two traps here,
+#     both of which produced a convincing false negative once: the box
+#     listens on 101.50.1.81, NOT on 127.0.0.1, so a loopback --resolve
+#     probe hits a default vhost and reports defaultwebpage.cgi however
+#     healthy the app is. And from outside, the Imunify360 edge answers
+#     non-browser clients with a "One moment, please..." interstitial that
+#     is itself HTTP 200. Requests originating on the server skip that
+#     interstitial, but the body is matched anyway so a 200 alone can
+#     never pass for a working app.
 set -euo pipefail
 
 INCOMING="${1:?butuh path tarball}"
@@ -80,8 +85,7 @@ cloudlinux-selector restart --json --interpreter python \
 log "Smoke test: https://$SMOKE_HOST/health"
 BODY=""
 for _ in 1 2 3 4 5 6; do
-    BODY="$(curl -k -sS -m 45 --resolve "$SMOKE_HOST:443:127.0.0.1" \
-        "https://$SMOKE_HOST/health" 2>/dev/null || true)"
+    BODY="$(curl -sS -m 45 "https://$SMOKE_HOST/health" 2>/dev/null || true)"
     case "$BODY" in *'"status":"ok"'*) break ;; esac
     sleep 5
 done
