@@ -198,13 +198,31 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                                         "refund",
                                     ],
                                     "description": (
-                                        "transfer mencakup top-up dan tarik tunai; "
-                                        "card_payment untuk membayar tagihan kartu kredit"
+                                        "transfer mencakup top-up dan tarik tunai. "
+                                        "PENTING - belanja PAKAI kartu kredit adalah "
+                                        "'expense' dengan from_account = kartunya, "
+                                        "BUKAN card_payment. Pakai 'card_payment' hanya "
+                                        "ketika pengguna MEMBAYAR TAGIHAN kartu "
+                                        "('bayar tagihan', 'lunasi kartu'); di situ "
+                                        "from_account adalah rekening yang membayar dan "
+                                        "to_account adalah kartunya."
                                     ),
                                 },
                                 "amount": _AMOUNT,
-                                "from_account": _ACCOUNT,
-                                "to_account": _ACCOUNT,
+                                "from_account": dict(
+                                    _ACCOUNT,
+                                    description=(
+                                        "Kantong sumber. Untuk card_payment ini "
+                                        "rekening yang MEMBAYAR, bukan kartunya."
+                                    ),
+                                ),
+                                "to_account": dict(
+                                    _ACCOUNT,
+                                    description=(
+                                        "Kantong tujuan. Untuk card_payment isi "
+                                        "dengan KARTU yang tagihannya dibayar."
+                                    ),
+                                ),
                                 "category": {"type": "string"},
                                 "fee": dict(_AMOUNT, description="Biaya admin, jika ada"),
                                 "occurred_on": {
@@ -376,16 +394,42 @@ Aturan lain:
 _WEEKDAYS = ("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu")
 
 
-def build_system_prompt(now: datetime, timezone_name: str = "Asia/Jakarta") -> str:
-    """Render the system prompt with today's date filled in.
+def build_system_prompt(
+    now: datetime,
+    timezone_name: str = "Asia/Jakarta",
+    wallets: list[tuple[str, str, str | None]] | None = None,
+) -> str:
+    """Render the system prompt with today's date and the user's wallets.
 
-    Without this the model dates relative expressions from whatever it
-    remembers: asked to record "kemarin" it produced 2023-10-25, three
-    years off, which would file the transaction in the wrong period and
-    look plainly wrong in the list. It has no clock, so it has to be told.
+    The date matters because the model has no clock: asked to record
+    "kemarin" without it, it produced 2023-10-25, three years off.
+
+    The wallet list matters because otherwise the model invents names.
+    Asked to spend "pakai cc" it sent the account name "credit_card" -
+    substituting the type for the name - and the lookup failed. Listing
+    what actually exists turns naming from a guess into a choice, and
+    costs a handful of tokens.
+
+    ``wallets`` is ``(name, type, alias)``.
     """
-    return SYSTEM_PROMPT_TEMPLATE.format(
+    prompt = SYSTEM_PROMPT_TEMPLATE.format(
         today=now.strftime("%Y-%m-%d"),
         weekday=_WEEKDAYS[now.weekday()],
         timezone=timezone_name,
     )
+
+    if wallets:
+        listed = "\n".join(
+            f"- {name} ({kind}" + (f", alias: {alias}" if alias else "") + ")"
+            for name, kind, alias in wallets
+        )
+        prompt += (
+            "\n\nKantong yang dimiliki pengguna saat ini:\n"
+            + listed
+            + "\n\nGunakan PERSIS nama di daftar itu saat memanggil tool. "
+            "Jangan mengarang nama lain dan jangan memakai jenis kantong "
+            "sebagai nama. Kalau yang disebut pengguna tidak ada di daftar, "
+            "katakan kantong itu belum ada."
+        )
+
+    return prompt

@@ -382,9 +382,13 @@ def main() -> int:
             outcome = run_case(app_module, adapter, case, today)
             outcomes.append(outcome)
             mark = "ok  " if outcome.passed else "GAGAL"
+            # flush: without it Python buffers when stdout is a file,
+            # so `python -m benchmarks.run > out.txt` shows nothing at
+            # all until the whole run finishes.
             print(
                 f"  {index:3}/{len(cases)}  {mark} {case.id}  {outcome.seconds:5.1f}s  "
-                f"{case.message[:52]}"
+                f"{case.message[:52]}",
+                flush=True,
             )
     finally:
         removed = cleanup(get_engine())

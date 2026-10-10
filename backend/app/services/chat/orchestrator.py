@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from ...models import AiRequestLog, Conversation, Draft, Message, MessageRole, User
+from ...models import Account, AiRequestLog, Conversation, Draft, Message, MessageRole, User
 from ..ai.base import AiAdapter, AiError, ChatResult
 from .dispatch import dispatch
 from .tools import ALL_TOOLS, PROPOSE_TOOL_NAMES, build_system_prompt
@@ -242,8 +242,27 @@ async def run_turn_events(
         now_local = datetime.now(timezone.utc)
         user_timezone = "UTC"
 
+    # The model cannot name a wallet it has not been shown. Without the
+    # list it invented names - "cc" went out as "credit_card" - and
+    # every such turn failed.
+    wallets = [
+        (a.name, a.type.value, a.alias)
+        for a in db.scalars(
+            select(Account)
+            .where(
+                Account.user_id == user_id,
+                Account.is_system.is_(False),
+                Account.is_archived.is_(False),
+            )
+            .order_by(Account.name)
+        ).all()
+    ]
+
     prompt: list[dict[str, Any]] = [
-        {"role": "system", "content": build_system_prompt(now_local, user_timezone)}
+        {
+            "role": "system",
+            "content": build_system_prompt(now_local, user_timezone, wallets),
+        }
     ]
     prompt += _as_prompt(recent_messages(db, conversation.id))
 

@@ -1040,9 +1040,7 @@ def test_narration_alongside_a_tool_call_is_retracted(chat):
     assert "reset" in kinds, "narration must be retracted"
     # Everything streamed after the reset is the real answer.
     after_reset = kinds.index("reset")
-    final = "".join(
-        e["text"] for e in events[after_reset:] if e["type"] == "token"
-    )
+    final = "".join(e["text"] for e in events[after_reset:] if e["type"] == "token")
 
     assert final == "Selesai."
     assert events[-1]["reply"] == "Selesai."
@@ -1094,3 +1092,33 @@ def test_a_streamed_turn_is_persisted_like_any_other(chat):
     bodies = [m["body"] for m in chat.get("/chat/messages").json()]
 
     assert bodies == ["halo lewat stream", "Halo!"]
+
+
+def test_the_model_is_shown_which_wallets_exist(chat):
+    """Regression guard for a benchmark finding.
+
+    Without the list the model invented account names: asked to spend
+    "pakai cc" it sent "credit_card", substituting the type for the
+    name, and every card case in the benchmark failed.
+    """
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    make_account(chat, "CC BCA", "credit_card", alias="cc")
+
+    chat.adapter.queue(text("Halo."))
+    send(chat, "halo")
+
+    system = chat.adapter.calls[-1]["messages"][0]["content"]
+
+    assert "BCA (bank, alias: bca)" in system
+    assert "CC BCA (credit_card, alias: cc)" in system
+    assert "jenis kantong" in system, "and told not to use the type as a name"
+
+
+def test_archived_wallets_are_not_offered_to_the_model(chat):
+    account = make_account(chat, "Dompet lama", "cash", balance=0)
+    chat.patch(f"/accounts/{account['id']}", json={"is_archived": True}).raise_for_status()
+
+    chat.adapter.queue(text("Halo."))
+    send(chat, "halo")
+
+    assert "Dompet lama" not in chat.adapter.calls[-1]["messages"][0]["content"]

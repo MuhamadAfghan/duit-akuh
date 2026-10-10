@@ -66,3 +66,5 @@ backend/__pycache__/
 
 # Generated with a real (dev) password in it
 backend/setup-db.sql
+
+backend/bench*.txt
