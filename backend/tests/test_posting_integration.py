@@ -519,3 +519,48 @@ def test_a_rejected_posting_leaves_no_audit_event(session, user):
     )
 
     assert after == before
+
+
+def test_an_exact_name_beats_a_substring_match(session, user):
+    """A bank and its own credit card is an ordinary pairing.
+
+    "CC BCA" contains "BCA", so a substring-only search made "pakai BCA"
+    ambiguous forever for anyone holding both.
+    """
+    make_bank(session, user, name="BCA", alias="bca")
+    open_account_with_balance(
+        session,
+        user_id=user.id,
+        name="CC BCA",
+        account_type=AccountType.CREDIT_CARD,
+        alias="cc",
+        occurred_at=NOW,
+    )
+
+    assert resolve_account(session, user.id, "BCA").name == "BCA"
+    assert resolve_account(session, user.id, "bca").name == "BCA"
+    # The card is still reachable by its own name and alias.
+    assert resolve_account(session, user.id, "CC BCA").name == "CC BCA"
+    assert resolve_account(session, user.id, "cc").name == "CC BCA"
+
+
+def test_a_substring_still_resolves_when_nothing_matches_exactly(session, user):
+    make_bank(session, user, name="BCA Tahapan", alias="tahapan")
+
+    assert resolve_account(session, user.id, "Tahapan").name == "BCA Tahapan"
+
+
+def test_a_substring_matching_several_accounts_is_still_ambiguous(session, user):
+    """Precedence must not turn a genuine ambiguity into a guess."""
+    make_bank(session, user, name="BCA Tahapan", alias="tahapan")
+    make_bank(session, user, name="BCA Bisnis", alias="bisnis", balance=1_000_000)
+
+    with pytest.raises(AmbiguousAccount):
+        resolve_account(session, user.id, "BCA")
+
+
+def test_two_accounts_named_the_same_are_impossible_so_exact_is_unique(session, user):
+    """The unique alias constraint plus distinct names keep tier one singular."""
+    make_bank(session, user, name="BCA", alias="bca")
+
+    assert len(find_accounts_by_name(session, user.id, "BCA")) == 1

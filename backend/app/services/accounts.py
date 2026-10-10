@@ -157,17 +157,45 @@ def open_account_with_balance(
 
 
 def find_accounts_by_name(session: Session, user_id: uuid.UUID, text: str) -> list[Account]:
-    """All of a user's wallets whose name or alias matches ``text``.
+    """A user's wallets matching ``text``, preferring exact matches.
 
-    Case-insensitive, matching either the alias exactly or the name as a
-    substring — roughly how a person refers to an account in chat. System
-    and archived accounts are excluded; they are not things a user spends
-    from by name.
+    Two tiers, and the precedence matters:
+
+    1. The alias, or the full name, matching exactly.
+    2. The name merely containing the text.
+
+    A substring match is only consulted when nothing matches exactly.
+    Without that, anyone with a "BCA" account **and** a "CC BCA" credit
+    card — an ordinary pairing — would find "pakai BCA" ambiguous
+    forever, because the card's name contains the bank's. Saying "BCA"
+    when an account is called exactly that is not ambiguous.
+
+    System and archived accounts are excluded; they are not things a
+    user spends from by name.
     """
     needle = text.strip().lower()
 
     if not needle:
         return []
+
+    def query(condition):
+        return list(
+            session.scalars(
+                select(Account)
+                .where(
+                    Account.user_id == user_id,
+                    Account.is_system.is_(False),
+                    Account.is_archived.is_(False),
+                    condition,
+                )
+                .order_by(Account.name)
+            ).all()
+        )
+
+    exact = query((Account.alias == needle) | (func.lower(Account.name) == needle))
+
+    if exact:
+        return exact
 
     return list(
         session.scalars(
@@ -176,7 +204,7 @@ def find_accounts_by_name(session: Session, user_id: uuid.UUID, text: str) -> li
                 Account.user_id == user_id,
                 Account.is_system.is_(False),
                 Account.is_archived.is_(False),
-                (Account.alias == needle) | (func.lower(Account.name).contains(needle)),
+                func.lower(Account.name).contains(needle),
             )
             .order_by(Account.name)
         ).all()

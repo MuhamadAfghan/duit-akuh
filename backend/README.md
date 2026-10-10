@@ -420,6 +420,16 @@ Measured against the real model: the card appears at 3.0s where the
 whole turn takes 4.1s, and for a read question tokens flow from 2.1s to
 2.8s rather than arriving in one lump at the end.
 
+## Benchmark
+
+`benchmarks/` holds a 103-message Indonesian corpus and a runner that
+measures the two figures the PRD gates the pilot on: ≥90% of drafts
+correct on amount, wallet, date and type, and a draft-response p95 under
+ten seconds. See `benchmarks/README.md`.
+
+It is not part of `pytest`: it costs GPU time on a shared box and needs
+a real `LLM_API_KEY`, and the suite must stay runnable without a model.
+
 ## Not built yet
 
 - **Deposit schedules.** Goals carry a target date but no deposit dates,

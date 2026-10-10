@@ -206,6 +206,7 @@ Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrat
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
 - **Deposit schedules.** Goals carry a target date but no deposit dates, so `remaining_deposits` is supplied by the caller rather than derived.
+- **Benchmark runs are manual.** `backend/benchmarks/` measures the PRD's pilot gates against the real model; nothing runs it automatically.
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
 - **The frontend has no test runner.** The backend has pytest covering AC01–AC05 and AC08; nothing covers the React side.
