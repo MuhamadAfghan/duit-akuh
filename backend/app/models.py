@@ -375,3 +375,58 @@ class AuditEvent(Base, OwnedMixin):
     before: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class Session(Base, TimestampMixin):
+    """A logged-in session, keyed by a random token held in a cookie.
+
+    Only the token's **hash** is stored. A database leak then exposes no
+    usable session, the same reasoning that applies to passwords — except
+    the token is 256 bits of randomness, so a fast hash is sufficient and
+    a slow KDF would only cost latency on every request.
+    """
+
+    __tablename__ = "sessions"
+    __table_args__ = (Index("ix_sessions_user_active", "user_id", "revoked_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: SHA-256 of the raw token. Unique so a lookup is a single index hit.
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: Set on logout or when sessions are revoked after a password change.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    #: Coarse client info to help a user recognise their own sessions.
+    #: Deliberately not an IP address: that is personal data the app has no
+    #: product need to retain.
+    user_agent: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    def is_valid(self, now: datetime) -> bool:
+        return self.revoked_at is None and self.expires_at > now
+
+
+class LoginAttempt(Base):
+    """Failed sign-in attempts, for the throttling PRD section 9 requires.
+
+    Only failures are recorded, and only an email and a timestamp — enough
+    to rate-limit without building a log of when someone signs in.
+    """
+
+    __tablename__ = "login_attempts"
+    __table_args__ = (Index("ix_login_attempts_email_time", "email", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    #: Stored lowercased. Not a foreign key: attempts against an address
+    #: that was never registered must be throttled too.
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

@@ -198,10 +198,10 @@ Built so far — the chat-first shell (UI only, no real data):
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
-- **No HTTP money endpoints yet.** `backend/` exposes only `/health`; AC08 makes per-owner authorization a release gate, so account and transaction endpoints wait on authentication.
+- **No HTTP money endpoints yet.** Authentication exists (`/auth/*`), but account and transaction endpoints are not written. They go on `deps.get_current_user`, which has no bypass by design (AC08).
 - **`src/sections/chat/stub-orchestrator.js` is a throwaway.** It fakes a draft from a crude regex so the card states can be exercised. Delete it when the orchestrator lands — the model must do the interpreting and the backend must compute every balance.
 - **`CONFIG.auth.skip` is temporarily `true`** so the UI is reachable without the vendor demo API. Must return to `false` before any real data exists.
-- **Auth still points at the vendor demo API** and must be replaced.
+- **The frontend still points at the vendor demo API** for auth and must be switched to `backend/`'s `/auth/*`.
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Chat is not streamed.** Cloudflare's 100s deadline makes streaming mandatory once the real LLM is wired.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
@@ -244,6 +244,13 @@ persistence, idempotency and ownership checks.
 
 Money is integer rupiah (`BIGINT`) throughout; `app/money.py` rejects
 non-integral floats rather than rounding (FR03).
+
+**Authentication** is email + password with server-side sessions in an
+httpOnly cookie (Argon2id, token stored only as a hash). `deps.get_current_user`
+is the only gate and has no development bypass. One trap it already hit: a
+control that must persist across a _failed_ request — the login throttle —
+needs an explicit commit before raising, or `get_db`'s rollback silently
+discards it.
 
 Environment comes from `backend/.env` (gitignored). `backend/setup-db.sql`
 is generated per machine, contains the dev role's password, and is also

@@ -1,13 +1,10 @@
 """FastAPI application.
 
-Deliberately small right now. The ledger foundation is in place, but the
-HTTP surface stays minimal until authentication exists: the PRD makes
-per-owner authorization a release gate (AC08), so adding endpoints that
-read or write money before there is a real user identity would mean
-shipping an unauthenticated financial API, even briefly.
+Authentication is in place; money endpoints go on top of
+``deps.get_current_user``, which has no bypass by design (AC08).
 
-Next: email/password auth, then account and transaction endpoints, then
-the chat orchestrator that calls the lumi-ai service.
+Next: account and transaction endpoints, then the chat orchestrator that
+calls the lumi-ai service.
 """
 
 from __future__ import annotations
@@ -17,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 
+from .api.routes_auth import router as auth_router
 from .config import get_settings
 from .domain.errors import DomainError
 
@@ -50,6 +48,9 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         status_code=422,
         content={"code": exc.code, "message": str(exc)},
     )
+
+
+app.include_router(auth_router)
 
 
 @app.get("/health", tags=["ops"])
