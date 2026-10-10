@@ -405,7 +405,12 @@ def test_duplicate_alias_is_rejected_by_the_database(session, user):
 
 
 def test_zero_amount_entry_is_rejected_by_the_database(session, user):
-    from sqlalchemy.exc import IntegrityError
+    # A CHECK violation is an IntegrityError on PostgreSQL, but MySQL
+    # reports it as error 4025, which SQLAlchemy classifies as an
+    # OperationalError. What matters to this test is that the *database*
+    # refuses the row rather than the application catching it first, so
+    # both are accepted.
+    from sqlalchemy.exc import IntegrityError, OperationalError
 
     bank = make_bank(session, user)
 
@@ -418,7 +423,7 @@ def test_zero_amount_entry_is_rejected_by_the_database(session, user):
     tx.entries = [Entry(user_id=user.id, account_id=bank.id, amount=0)]
     session.add(tx)
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises((IntegrityError, OperationalError)):
         session.flush()
 
 

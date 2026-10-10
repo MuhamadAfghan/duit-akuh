@@ -1,0 +1,152 @@
+name: Deploy ke cPanel
+
+# Push ke `main` deploy ke produksi.
+# Bisa juga dijalankan manual: Actions -> Deploy ke cPanel -> Run workflow.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependency
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ruff
+        working-directory: backend
+        run: ruff check .
+
+      # Integration tests need a live database and are skipped without
+      # TEST_DATABASE_URL. The cPanel MariaDB only listens on localhost, so
+      # the runner cannot reach it; the pure money rules still run here and
+      # the DB-backed ones run against the real server over an SSH tunnel.
+      - name: Pytest (aturan murni)
+        working-directory: backend
+        run: python -m pytest -q -m "not integration"
+
+  deploy:
+    name: Build & deploy
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      WEB_HOST: ${{ vars.WEB_HOST }}
+      API_HOST: ${{ vars.API_HOST }}
+      WEB_DIR: ${{ vars.WEB_DIR }}
+      API_DIR: ${{ vars.API_DIR }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          # Pinned to the server's runtime: CloudLinux Node Selector tops
+          # out at 20.20.2, so building on 22 could emit syntax the server
+          # cannot parse.
+          node-version: '20.20.2'
+          cache: npm
+
+      - name: Install dependency
+        # `engines` in package.json asks for >=22.12, which this image does
+        # not satisfy. npm only warns by default, but be explicit so a
+        # future engine-strict default cannot break the build.
+        run: npm ci --engine-strict=false
+
+      - name: Build frontend (standalone)
+        env:
+          BUILD_STANDALONE: '1'
+          # Baked into routes-manifest.json at build time, which is why the
+          # API host has to be known here and not at boot.
+          BACKEND_URL: https://${{ vars.API_HOST }}
+        run: npm run build
+
+      - name: Bangun artifact frontend
+        run: |
+          # `standalone` omits these two on purpose: static assets and
+          # public/ are expected to be served from alongside server.js.
+          cp -r .next/static .next/standalone/.next/static
+          cp -r public .next/standalone/public
+          tar -czf /tmp/release-web.tar.gz -C .next/standalone .
+          ls -lh /tmp/release-web.tar.gz
+
+      - name: Bangun artifact backend
+        run: |
+          stage="$(mktemp -d)"
+          cp -r backend/app backend/alembic "$stage/"
+          cp backend/alembic.ini backend/requirements-prod.txt "$stage/"
+          cp deploy/passenger_wsgi.py "$stage/"
+          find "$stage" -name '__pycache__' -type d -prune -exec rm -rf {} +
+          tar -czf /tmp/release-api.tar.gz -C "$stage" .
+          ls -lh /tmp/release-api.tar.gz
+
+      - name: Siapkan SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Cek koneksi SSH
+        run: |
+          if ! ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+                   -o ConnectTimeout=25 "$SSH_USER@$SSH_HOST" 'echo ok'; then
+            echo "::error::Tidak bisa SSH ke $SSH_HOST:$SSH_PORT dari runner GitHub."
+            echo "::error::Kemungkinan besar IP runner diblokir firewall hosting (CSF/Imunify360)."
+            echo "::error::Minta whitelist ke support Jagoan Hosting, atau pakai self-hosted runner."
+            exit 1
+          fi
+
+      - name: Kirim artifact
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" "mkdir -p ~/$API_DIR/releases ~/$WEB_DIR/releases"
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+              /tmp/release-api.tar.gz \
+              "$SSH_USER@$SSH_HOST:~/$API_DIR/releases/api-${{ github.sha }}.tar.gz"
+          scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+              /tmp/release-web.tar.gz \
+              "$SSH_USER@$SSH_HOST:~/$WEB_DIR/releases/web-${{ github.sha }}.tar.gz"
+
+      # Backend first: the frontend proxies /api/* to it, so a frontend
+      # that went live against a failed backend would serve a broken app.
+      - name: Aktifkan backend
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" 'bash -s' -- \
+              "/home/$SSH_USER/$API_DIR/releases/api-${{ github.sha }}.tar.gz" "$API_HOST" \
+              < deploy/activate-api.sh
+
+      - name: Aktifkan frontend
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
+              "$SSH_USER@$SSH_HOST" 'bash -s' -- \
+              "/home/$SSH_USER/$WEB_DIR/releases/web-${{ github.sha }}.tar.gz" "$WEB_HOST" \
+              < deploy/activate-web.sh
+
+      - name: Bersihkan kunci
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

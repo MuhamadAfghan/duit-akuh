@@ -1,0 +1,26 @@
+# Runtime-only dependency set for the cPanel/Passenger deployment.
+#
+# Deliberately NOT `-r requirements.txt`: that file carries pytest and
+# ruff, and the shared host has a 15 GB quota shared with the other
+# project on this account. Keep the two in sync when bumping a runtime
+# bound.
+
+fastapi>=0.115
+sqlalchemy>=2.0.36
+# MariaDB 10.6 on the cPanel host. PyMySQL is pure Python, so it needs
+# no compiler or libmysqlclient on a box that has neither.
+PyMySQL>=1.1
+alembic>=1.14
+pydantic[email]>=2.9
+python-multipart>=0.0.12
+argon2-cffi>=23.1
+httpx>=0.27
+
+# Passenger on cPanel speaks WSGI only; FastAPI is ASGI. a2wsgi bridges
+# the two and, unlike a thread-pool shim, forwards streamed responses
+# chunk by chunk — which the chat endpoint needs (it returns NDJSON).
+a2wsgi>=1.10
+
+# uvicorn is not needed under Passenger (it supplies the server), but is
+# kept for running the API by hand on the box while debugging.
+uvicorn[standard]>=0.32

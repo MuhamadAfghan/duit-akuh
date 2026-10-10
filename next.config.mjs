@@ -11,11 +11,26 @@
  */
 const isStaticExport = false;
 
+/**
+ * Production builds for cPanel/Passenger.
+ *
+ * `standalone` emits `.next/standalone/server.js` together with a pruned
+ * `node_modules`, so the server runs the app without ever installing
+ * dependencies — which matters because the shared host has no build
+ * toolchain and a 15 GB quota. Opt in with `BUILD_STANDALONE=1` so
+ * `next dev` and any non-cPanel build stay untouched.
+ */
+const isStandalone = process.env.BUILD_STANDALONE === '1';
+
 // ----------------------------------------------------------------------
 
 /**
  * Where the FastAPI backend lives. The browser never sees this: requests
  * go to /api/* on this origin and are proxied below.
+ *
+ * NOTE: `rewrites()` is evaluated at build time and baked into
+ * `routes-manifest.json`, so this has to be set when the bundle is built
+ * — not when it starts. Changing the API host means rebuilding.
  */
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://127.0.0.1:8000';
 
@@ -29,7 +44,7 @@ const nextConfig = {
    * redirect chain.
    */
   trailingSlash: isStaticExport,
-  output: isStaticExport ? 'export' : undefined,
+  output: isStaticExport ? 'export' : isStandalone ? 'standalone' : undefined,
   env: {
     BUILD_STATIC_EXPORT: JSON.stringify(isStaticExport),
   },

@@ -183,7 +183,8 @@ The MVP is largely built: a double-entry ledger, auth, the chat orchestrator wit
 
 Stack decisions already made (2026-10-10):
 
-- **Backend: FastAPI + PostgreSQL**, per the PRD's recommendation — a separate service in `backend/`. The ledger foundation exists; see `backend/README.md`.
+- **Backend: FastAPI**, per the PRD's recommendation — a separate service in `backend/`. The ledger foundation exists; see `backend/README.md`.
+- **Database: PostgreSQL locally, MySQL/MariaDB in production.** The PRD asks for PostgreSQL and it remains the better fit for this schema, but the cPanel host the app is deployed to has no PostgreSQL at all (`uapi Postgresql` answers "This server does not support this functionality"), only MariaDB 10.6. `backend/app/types.py` is what keeps the two equivalent — read it before touching a column type. The full suite passes on both (354 tests each).
 - **Auth: own email + password**, Argon2id with server-side sessions in an httpOnly cookie and the §9 login throttle. Built; see `backend/README.md`.
 - **AI: the self-hosted `lumi-ai` service** described above, behind a swappable adapter.
 
@@ -222,8 +223,8 @@ Mobile mechanics worth knowing before touching the shell:
 
 ## Backend (`backend/`)
 
-A separate FastAPI + PostgreSQL service. Full detail in `backend/README.md`;
-the essentials:
+A separate FastAPI service, on PostgreSQL locally and MariaDB in
+production. Full detail in `backend/README.md`; the essentials:
 
 ```sh
 cd backend
@@ -247,6 +248,38 @@ persistence, idempotency and ownership checks.
 Money is integer rupiah (`BIGINT`) throughout; `app/money.py` rejects
 non-integral floats rather than rounding (FR03).
 
+**The schema has to run on two engines**, so every column type goes
+through `app/types.py`. Do not reach for `sqlalchemy.dialects.postgresql`
+in a model again — the four traps it exists to cover:
+
+- `JSONB` does not exist on MariaDB (`JSON` there is a `LONGTEXT` alias
+  with a `json_valid()` CHECK). Use `JsonDoc`, which keeps JSONB on
+  PostgreSQL.
+- **MariaDB has no timezone-aware timestamp.** `UtcDateTime` stores UTC
+  and reattaches the offset on load; it also *refuses* a naive datetime
+  rather than guessing. `app/db.py` pins `time_zone='+00:00'` per MySQL
+  connection, because this host's system zone is WIB (+07) and a
+  server-side `CURRENT_TIMESTAMP` default would otherwise be seven hours
+  out. It pins `STRICT_ALL_TABLES` for the same class of reason: outside
+  strict mode MySQL truncates an over-range amount with a warning.
+- `sa.Uuid` renders native `uuid` on PostgreSQL and `CHAR(32)` elsewhere.
+  `sa.UUID` does not — it emits a native type MariaDB only has from 10.7.
+- **`Identity()` generates nothing on MySQL.** `messages.seq` therefore
+  gets an explicit `AUTO_INCREMENT`, applied twice on purpose: a
+  `after_create` DDL listener in `app/models.py` for
+  `metadata.create_all()` (how the tests build the schema) and an
+  `op.execute` in the migration (`op.create_table` does not fire DDL
+  events). Without it every message insert fails with "Field 'seq'
+  doesn't have a default value".
+
+Two behaviour differences the tests encode rather than paper over: a
+CHECK violation is an `IntegrityError` on PostgreSQL but an
+`OperationalError` (error 4025) on MySQL, and a bulk `DELETE` over a
+table with a self-referencing `RESTRICT` foreign key succeeds on
+PostgreSQL while MySQL checks row-by-row and aborts — which is why
+`tests/conftest.py`'s `reset_tables` nulls `transactions.reverses_id` and
+`accounts.linked_account_id` first.
+
 **Authentication** is email + password with server-side sessions in an
 httpOnly cookie (Argon2id, token stored only as a hash). `deps.get_current_user`
 is the only gate and has no development bypass. One trap it already hit: a
@@ -257,6 +290,73 @@ discards it.
 Environment comes from `backend/.env` (gitignored). `backend/setup-db.sql`
 is generated per machine, contains the dev role's password, and is also
 gitignored — recreate it rather than looking for it in git.
+
+## Deployment (cPanel, Jagoan Hosting)
+
+Production is the shared cPanel account `rswicent` on
+`heroic.jagoanhosting.id` (SSH on port **45022**, publickey only). That
+account also hosts an unrelated Laravel project on the main domain —
+`public_html -> /home/rswicent/rswicentral.my.id/current/public`. **Do not
+touch the main domain.**
+
+| | frontend | backend |
+| --- | --- | --- |
+| domain | `finance.rswicentral.my.id` | `api-finance.rswicentral.my.id` |
+| app root | `~/finance.agann.my.id/app` | `~/api-finance.agann.my.id/app` |
+| runtime | Node **20.20.2** (Passenger) | Python **3.11.17** (Passenger) |
+| entry | `server.js` (Next standalone) | `passenger_wsgi.py` |
+
+`npm run build` is not enough for this host: set `BUILD_STANDALONE=1` so
+Next emits `server.js` plus a pruned `node_modules`, because the server has
+no build toolchain. The bundle **must be built on Linux** — a Windows build
+ships `@next/swc-win32-*` binaries that cannot load there. CI does this.
+
+Constraints that shaped the deploy scripts, all verified on the box:
+
+- **No `rsync`** — artifacts move as `tar` + `scp`.
+- **Node caps at 20.20.2**, below `package.json`'s `engines` (>=22.12), so
+  CI installs with `--engine-strict=false`.
+- **Passenger's app root is fixed.** The CloudLinux selector resolves
+  symlinks when it writes the `.htaccess` block, so a
+  `current -> releases/rX` symlink bakes the release name into the config
+  (and into the venv path). Releases are swapped by *moving directories*
+  (`app` ⇄ `app.old`) instead, which keeps the registration and the
+  virtualenv stable. Restart is `touch app/tmp/restart.txt`.
+- **`.htaccess` is not part of the build.** It carries the Passenger
+  directives, so `shared/htaccess` holds the canonical copy and each
+  activate script copies it into the new release's `public/`.
+- **Secrets live only in `shared/.env`** (mode 600, outside every release,
+  never rewritten by a deploy). The LLM key and Cloudflare Access tokens
+  are there and nowhere else — not in GitHub (AC21).
+- **A smoke test cannot just check for HTTP 200.** The public edge answers
+  non-browser clients with an Imunify360 "One moment, please..."
+  interstitial that *is* a 200, so the scripts probe over loopback TLS
+  (`curl --resolve host:443:127.0.0.1`) and match on body content —
+  `"status":"ok"` for the API, a `/_next/` asset for the web app.
+
+```sh
+# deploy: push to main, or Actions -> "Deploy ke cPanel" -> Run workflow
+ssh duitakuh 'bash -s' -- api < deploy/rollback.sh   # instant app <-> app.old swap
+ssh duitakuh 'bash -s' -- web < deploy/rollback.sh
+```
+
+Rollback does **not** revert migrations, by design.
+
+### Open blockers
+
+- **The webserver vhosts are not live.** Both subdomains exist in cPanel
+  (userdata, DNS, AutoSSL all correct) but LiteSpeed has never been given
+  a config rebuild, so every request falls through to
+  `/cgi-sys/defaultwebpage.cgi` and no per-domain access log is created.
+  This needs root: Jagoan support must run `/scripts/rebuildhttpdconf` and
+  restart LiteSpeed. Nothing in the app can work around it.
+- **`finance.agann.my.id` cannot be added.** `agann.my.id` belongs to a
+  different cPanel account on the same server, so cPanel refuses the
+  subdomain ("you can not add a DNS record for a subdomain of another
+  user's domain"). The `*.rswicentral.my.id` pair above is the interim
+  target. Once Jagoan attaches the real domains, change the `WEB_HOST` /
+  `API_HOST` GitHub variables and redeploy — `BACKEND_URL` is baked at
+  build time, so a rebuild is required, not just a restart.
 
 ## Reference template (`_reference/`, gitignored)
 

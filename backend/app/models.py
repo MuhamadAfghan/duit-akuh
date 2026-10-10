@@ -31,10 +31,10 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    DDL,
     BigInteger,
     Boolean,
     CheckConstraint,
-    DateTime,
     Enum,
     ForeignKey,
     Identity,
@@ -42,10 +42,13 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    Uuid,
+    event,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship
+
+from .types import JsonDoc, UtcDateTime
 
 
 def utcnow() -> datetime:
@@ -135,10 +138,10 @@ class TransactionStatus(str, enum.Enum):
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=utcnow
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now(), onupdate=utcnow
     )
 
 
@@ -153,7 +156,7 @@ class OwnedMixin:
     @declared_attr
     def user_id(cls) -> Mapped[uuid.UUID]:  # noqa: N805
         return mapped_column(
-            UUID(as_uuid=True),
+            Uuid(as_uuid=True),
             ForeignKey("users.id", ondelete="CASCADE"),
             nullable=False,
             index=True,
@@ -168,7 +171,7 @@ class OwnedMixin:
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
     #: argon2/bcrypt hash. Never the password itself.
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
@@ -189,7 +192,7 @@ class Account(Base, OwnedMixin, TimestampMixin):
         CheckConstraint("credit_limit IS NULL OR credit_limit >= 0", name="ck_accounts_limit"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     #: Lowercased short name the user says in chat; NULL for system accounts.
     alias: Mapped[str | None] = mapped_column(String(60), nullable=True)
@@ -210,7 +213,7 @@ class Account(Base, OwnedMixin, TimestampMixin):
 
     #: A debit card points at the bank account it draws from.
     linked_account_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=True
     )
 
     #: Archived, never deleted: an account with history must keep it (FR01).
@@ -239,7 +242,7 @@ class Transaction(Base, OwnedMixin, TimestampMixin):
         Index("ix_transactions_user_occurred", "user_id", "occurred_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
 
     type: Mapped[TransactionType] = mapped_column(
         Enum(TransactionType, name="transaction_type"), nullable=False
@@ -252,7 +255,7 @@ class Transaction(Base, OwnedMixin, TimestampMixin):
 
     #: When it happened in the user's timezone, as opposed to created_at,
     #: which is when we recorded it. The PRD requires both.
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     merchant: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -266,7 +269,7 @@ class Transaction(Base, OwnedMixin, TimestampMixin):
     #: Links a refund or reversal back to what it corrects, so history stays
     #: traceable instead of rows disappearing (FR02/AC08).
     reverses_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("transactions.id", ondelete="RESTRICT"), nullable=True
     )
 
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
@@ -292,13 +295,13 @@ class Entry(Base, OwnedMixin):
         Index("ix_entries_user_account", "user_id", "account_id"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False
     )
     account_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
     )
 
     #: Integer rupiah. Positive debit, negative credit.
@@ -313,10 +316,10 @@ class Goal(Base, OwnedMixin, TimestampMixin):
 
     __tablename__ = "goals"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     target_amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    target_date: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     priority: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
@@ -341,12 +344,12 @@ class Allocation(Base, OwnedMixin, TimestampMixin):
         UniqueConstraint("goal_id", "account_id", name="uq_allocation_goal_account"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     goal_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("goals.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("goals.id", ondelete="CASCADE"), nullable=False
     )
     account_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="RESTRICT"), nullable=False
     )
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
@@ -360,21 +363,21 @@ class AuditEvent(Base, OwnedMixin):
     __tablename__ = "audit_events"
     __table_args__ = (Index("ix_audit_user_created", "user_id", "created_at"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
     )
 
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     object_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    object_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    object_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
 
     #: Correlates every row written by one confirmed action, so a multi-step
     #: plan can be traced or audited as a unit (FR15).
     operation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
-    before: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    after: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    before: Mapped[dict | None] = mapped_column(JsonDoc, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JsonDoc, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -390,19 +393,19 @@ class Session(Base, TimestampMixin):
     __tablename__ = "sessions"
     __table_args__ = (Index("ix_sessions_user_active", "user_id", "revoked_at"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     #: SHA-256 of the raw token. Unique so a lookup is a single index hit.
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
 
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
     #: Set on logout or when sessions are revoked after a password change.
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
     )
 
     #: Coarse client info to help a user recognise their own sessions.
@@ -424,12 +427,12 @@ class LoginAttempt(Base):
     __tablename__ = "login_attempts"
     __table_args__ = (Index("ix_login_attempts_email_time", "email", "created_at"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     #: Stored lowercased. Not a foreign key: attempts against an address
     #: that was never registered must be throttled too.
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
     )
 
 
@@ -458,7 +461,7 @@ class Conversation(Base, OwnedMixin, TimestampMixin):
     __tablename__ = "conversations"
     __table_args__ = (UniqueConstraint("user_id", name="uq_conversation_per_user"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
 
 
 class Message(Base, OwnedMixin):
@@ -467,9 +470,9 @@ class Message(Base, OwnedMixin):
     __tablename__ = "messages"
     __table_args__ = (Index("ix_messages_conversation_seq", "conversation_id", "seq"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
 
     #: Ordering key. NOT created_at: PostgreSQL's now() returns the
@@ -479,7 +482,7 @@ class Message(Base, OwnedMixin):
     seq: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False, unique=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
     )
 
     role: Mapped[MessageRole] = mapped_column(
@@ -490,7 +493,7 @@ class Message(Base, OwnedMixin):
     #: Set when this turn is a card rather than prose. The card's content
     #: lives on the Draft row so it cannot drift from what gets posted.
     draft_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("drafts.id", ondelete="SET NULL"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("drafts.id", ondelete="SET NULL"), nullable=True
     )
 
 
@@ -506,7 +509,7 @@ class Draft(Base, OwnedMixin, TimestampMixin):
     __tablename__ = "drafts"
     __table_args__ = (Index("ix_drafts_user_status", "user_id", "status"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
 
     #: What kind of change: matches the API draft discriminator.
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -515,17 +518,17 @@ class Draft(Base, OwnedMixin, TimestampMixin):
     )
 
     #: The validated draft body, in the same shape the REST API accepts.
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict] = mapped_column(JsonDoc, nullable=False)
     #: The impact rows shown to the user, stored so the card can be
     #: re-rendered later exactly as it was.
-    impact: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    impact: Mapped[dict | None] = mapped_column(JsonDoc, nullable=True)
 
     #: Doubles as the idempotency key when confirmed, which is what makes
     #: tapping a stale card twice harmless (AC13).
     operation_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
 
     transaction_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
+        Uuid(as_uuid=True), ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True
     )
 
 
@@ -540,9 +543,9 @@ class AiRequestLog(Base, OwnedMixin):
     __tablename__ = "ai_request_logs"
     __table_args__ = (Index("ix_ai_logs_user_created", "user_id", "created_at"),)
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
     )
 
     #: chat | vision | stt
@@ -557,7 +560,7 @@ class AiRequestLog(Base, OwnedMixin):
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     #: Names only, never arguments: arguments carry amounts and accounts.
-    tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    tool_calls: Mapped[list | None] = mapped_column(JsonDoc, nullable=True)
 
 
 class Budget(Base, OwnedMixin, TimestampMixin):
@@ -578,14 +581,41 @@ class Budget(Base, OwnedMixin, TimestampMixin):
         CheckConstraint("amount > 0", name="ck_budgets_positive"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_uuid)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
 
     #: Must be an expense-kind account; enforced in the service, which
     #: has the account to inspect.
     category_account_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
     )
 
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+# ----------------------------------------------------------------------
+# Dialect fix-ups
+# ----------------------------------------------------------------------
+
+# `messages.seq` needs a database-generated, monotonic, tie-free value
+# (see the column's own comment). `Identity()` provides that on
+# PostgreSQL; MySQL has no IDENTITY, so SQLAlchemy renders a plain
+# BIGINT. The ORM still treats the column as server-generated and leaves
+# it out of the INSERT, so without the ALTER below every message insert
+# fails with "Field 'seq' doesn't have a default value".
+#
+# AUTO_INCREMENT is the MySQL equivalent, and MariaDB allows it on a
+# non-primary-key column provided the column is indexed — which the
+# UNIQUE constraint on `seq` already guarantees.
+#
+# This listener covers `metadata.create_all()`, which is how the test
+# fixtures build the schema. The Alembic migration repeats the statement
+# because `op.create_table()` does not emit DDL events.
+event.listen(
+    Message.__table__,
+    "after_create",
+    DDL("ALTER TABLE messages MODIFY seq BIGINT NOT NULL AUTO_INCREMENT").execute_if(
+        dialect="mysql"
+    ),
+)

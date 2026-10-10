@@ -22,21 +22,12 @@ PASSWORD = "sangat-rahasia-123"
 
 
 @pytest.fixture
-def api(engine, monkeypatch):
+def api(engine, monkeypatch, reset_tables):
     from fastapi.testclient import TestClient
     from sqlalchemy.orm import sessionmaker
 
     from app import db as db_module
     from app.main import app
-    from app.models import (
-        Account,
-        AuditEvent,
-        Entry,
-        LoginAttempt,
-        Session,
-        Transaction,
-        User,
-    )
 
     factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False, future=True)
     monkeypatch.setattr(db_module, "get_session_factory", lambda: factory)
@@ -47,10 +38,7 @@ def api(engine, monkeypatch):
         ).raise_for_status()
         yield client
 
-    with factory() as cleanup:
-        for model in (AuditEvent, Entry, Transaction, Account, Session, LoginAttempt, User):
-            cleanup.query(model).delete()
-        cleanup.commit()
+    reset_tables(factory)
 
 
 def account(api, name="BCA", balance=5_000_000, type_="bank"):

@@ -1,6 +1,7 @@
 # Duit Akuh — backend
 
-FastAPI + PostgreSQL ledger for the personal finance app. Requirements
+FastAPI ledger for the personal finance app, on PostgreSQL locally and
+MySQL/MariaDB in production. Requirements
 live in [`../docs/PRD.md`](../docs/PRD.md); this service owns everything
 the PRD calls "fondasi akun dan ledger".
 
@@ -51,7 +52,7 @@ alembic/versions/     checked-in migrations; downgrades drop their ENUMs
 benchmarks/           103-message Indonesian corpus, runner and watcher
 tests/
   test_acceptance_criteria.py   the PRD's ACs as tests - no database needed
-  test_posting_integration.py   idempotency, atomicity, isolation - needs PostgreSQL
+  test_posting_integration.py   idempotency, atomicity, isolation - needs a database
   test_auth.py test_chat.py test_goals.py test_budgets.py test_simulation.py …
 ```
 
@@ -73,9 +74,13 @@ Requires Python 3.11+ (developed on 3.12).
 
 ## Database
 
-PostgreSQL 17, either one installed on the machine (what this is
-developed against, port 5432) or the bundled container (port **5433**, so
-it cannot clash with a local install):
+Two engines are supported, and the suite passes on both (354 tests
+each). `app/types.py` is the only place that knows the difference — read
+its module docstring before changing a column type.
+
+**PostgreSQL** for local work (the better fit for this schema): either one
+installed on the machine (port 5432) or the bundled container (port
+**5433**, so it cannot clash with a local install):
 
 ```sh
 docker compose up -d db
@@ -105,7 +110,36 @@ initial one again:
 
 Downgrades work as well as upgrades, which took an extra step: Alembic
 does not drop an ENUM type it created, so a downgrade left the type
-behind and the next upgrade failed. Each downgrade drops its own types.
+behind and the next upgrade failed. Each downgrade drops its own types —
+guarded by a dialect check, since MySQL has no standalone enum types.
+
+### MySQL/MariaDB (what production runs)
+
+The deployment target is a shared cPanel host with **MariaDB 10.6** and no
+PostgreSQL available, so production uses:
+
+```
+DATABASE_URL=mysql+pymysql://user:password@127.0.0.1:3306/dbname?charset=utf8mb4
+```
+
+`PyMySQL` is the driver — pure Python, so it needs no compiler on a box
+that has neither one nor `libmysqlclient`. Create the database as
+`utf8mb4`/`utf8mb4_unicode_ci`; cPanel's default is still `latin1`, which
+would mangle Indonesian text.
+
+Running the suite against it is worth doing before a release, because a
+handful of guarantees are genuinely engine-specific. Point
+`TEST_DATABASE_URL` at a MySQL database and leave `APP_ENV` unset or
+non-production — `APP_ENV=production` marks the session cookie
+`Secure`, which the plain-HTTP test client cannot return, and every
+authenticated test then fails with a confusing 401.
+
+The differences that mattered are documented in `app/types.py` and in the
+root `CLAUDE.md`: no JSONB, no timezone-aware timestamp, no native UUID
+before 10.7, `Identity()` generating nothing (hence the explicit
+`AUTO_INCREMENT` on `messages.seq`), CHECK violations arriving as
+`OperationalError`, and bulk deletes tripping over self-referencing
+`RESTRICT` foreign keys.
 
 ## Running it
 
