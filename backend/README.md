@@ -346,6 +346,26 @@ the PRD forbids it, so the tool now accepts either spelling, and every
 simulation error tells the model in so many words not to compute it
 itself.
 
+## CSV export (AC10)
+
+`GET /export/transactions.csv` takes the same period filters as the
+reports, because AC10 requires the export to match the filter the user
+applied rather than always dumping everything.
+
+**One row per entry, not per transaction.** A transfer has two sides and
+a transfer with a fee has three; collapsing them would force a choice
+about which account and amount to show and lose the rest. Entry rows
+reconstruct the ledger exactly — a test asserts a transfer's three rows
+still sum to zero — and the transaction id ties them together.
+
+Text the user entered is prefixed with an apostrophe when it starts with
+`=`, `+`, `-` or `@`, because Excel and Sheets execute such a cell on
+open. The data is the user's own, but notes also arrive from chat and,
+later, receipt OCR.
+
+The response is streamed; an export is unbounded by nature and the PRD
+targets 10,000 transactions per user.
+
 ## Not built yet
 
 - **Deposit schedules.** Goals carry a target date but no deposit dates,

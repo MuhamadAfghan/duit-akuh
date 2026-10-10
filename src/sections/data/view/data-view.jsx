@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
+import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import LinearProgress from '@mui/material/LinearProgress';
 
@@ -14,6 +15,7 @@ import { formatRupiah } from 'src/utils/format-money';
 import { accountsApi, transactionsApi } from 'src/lib/api';
 
 import { Label } from 'src/components/label';
+import { Iconify } from 'src/components/iconify';
 
 import { SurfaceEmpty, SurfaceHeader } from '../../common';
 
@@ -161,9 +163,27 @@ export function DataView() {
       <SurfaceHeader
         title="Data"
         action={
-          <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-            {transactions.length ? `${transactions.length} transaksi` : ''}
-          </Typography>
+          <Stack direction="row" sx={{ alignItems: 'center', gap: 1.5 }}>
+            <Typography variant="caption" sx={{ color: 'text.disabled' }}>
+              {transactions.length ? `${transactions.length} transaksi` : ''}
+            </Typography>
+
+            {transactions.length > 0 && (
+              <Button
+                size="small"
+                color="inherit"
+                /* A plain link, not fetch(): the browser handles the
+                   download and the Content-Disposition filename, and the
+                   session cookie rides along because it is same-origin. */
+                component="a"
+                href="/api/export/transactions.csv?period=semua"
+                startIcon={<Iconify icon="solar:download-bold" width={18} />}
+                sx={{ minHeight: 44 }}
+              >
+                CSV
+              </Button>
+            )}
+          </Stack>
         }
       />
       <Box

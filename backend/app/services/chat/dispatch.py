@@ -611,6 +611,10 @@ def tool_propose_allocation(db: DbSession, user_id: uuid.UUID, args: dict) -> di
         "goal_id": str(goal.id),
         "account_id": str(account.id),
         "amount": amount,
+        # Display-only. Confirmation reads the ids; without the names the
+        # card could only show a UUID.
+        "goal_name": goal.name,
+        "account_name": account.name,
     }
 
     already = saved_for(db, user_id, goal.id)

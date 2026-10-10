@@ -206,7 +206,6 @@ Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrat
 
 - **The frontend still talks to nothing.** The ledger exists in `backend/`, but the Next.js app has no client for it — the chat remains stubbed.
 - **Deposit schedules.** Goals carry a target date but no deposit dates, so `remaining_deposits` is supplied by the caller rather than derived.
-- **CSV export** (listed in the PRD's MVP scope).
 - **No AI adapter.** Nothing calls `lumi-ai` yet.
 - **Chat is not streamed to the browser.** The backend adapter streams from vLLM (required: Cloudflare 524s past 100s), but `/chat/messages` returns one complete turn.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.

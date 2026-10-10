@@ -6,10 +6,10 @@ import Box from '@mui/material/Box';
 
 import { chatApi, ApiError, accountsApi } from 'src/lib/api';
 
+import { DraftCard } from '../cards';
 import { ChatHeader } from '../chat-header';
 import { ChatThread } from '../chat-thread';
 import { ChatComposer } from '../chat-composer';
-import { TransactionDraftCard } from '../cards';
 
 // ----------------------------------------------------------------------
 
@@ -53,36 +53,6 @@ function toThread(messages) {
     };
   });
 }
-
-/**
- * Map a stored draft payload onto the card's display fields.
- *
- * The payload identifies accounts by id, so `names` maps them back for
- * display. Falls back to omitting the row rather than showing a UUID.
- */
-function toCardDraft(card, names) {
-  const { payload } = card;
-
-  return {
-    type: payload.type ?? card.kind,
-    amount: payload.amount ?? 0,
-    from: names[payload.from_account_id],
-    to: names[payload.to_account_id] ?? names[payload.card_account_id],
-    category: payload.category,
-    merchant: payload.merchant,
-    note: payload.note,
-    fee: payload.fee,
-    date: payload.occurred_at ? payload.occurred_at.slice(0, 10) : 'Hari ini',
-  };
-}
-
-/** Card statuses the backend uses, mapped to what ActionCard expects. */
-const CARD_STATUS = {
-  pending: 'draft',
-  confirmed: 'saved',
-  cancelled: 'cancelled',
-  stale: 'error',
-};
 
 // ----------------------------------------------------------------------
 
@@ -190,35 +160,14 @@ export function ChatView() {
   );
 
   const renderCard = useCallback(
-    (message) => {
-      const { card } = message;
-      // 'saving' is set locally and has no backend equivalent.
-      const cardStatus =
-        card.status === 'saving' ? 'saving' : (CARD_STATUS[card.status] ?? 'draft');
-
-      return (
-        <TransactionDraftCard
-          draft={toCardDraft(card, accountNames)}
-          impact={(card.impact ?? []).map((row) => ({
-            label: row.account,
-            before: row.before,
-            after: row.after,
-          }))}
-          status={cardStatus}
-          statusMessage={
-            card.status === 'confirmed'
-              ? 'Tersimpan.'
-              : card.status === 'cancelled'
-                ? 'Draft dibatalkan. Tidak ada yang tersimpan.'
-                : card.status === 'stale'
-                  ? 'Draft sudah tidak berlaku.'
-                  : undefined
-          }
-          onConfirm={() => handleConfirm(card)}
-          onCancel={() => handleCancel(card)}
-        />
-      );
-    },
+    (message) => (
+      <DraftCard
+        card={message.card}
+        names={accountNames}
+        onConfirm={() => handleConfirm(message.card)}
+        onCancel={() => handleCancel(message.card)}
+      />
+    ),
     [handleConfirm, handleCancel, accountNames]
   );
 
