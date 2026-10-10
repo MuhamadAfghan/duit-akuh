@@ -4,9 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Web pencatatan keuangan dengan integrasi AI. Product requirements live in `PRD_Keuangan_AI_Web_v1.docx` at the repo root — read it before planning feature work.
+Web pencatatan keuangan pribadi berbasis AI, for Indonesian users (IDR, Bahasa Indonesia, Asia/Jakarta).
 
-The codebase is the **Minimal UI v7.7.0 `starter-next-js`** template (commercial MUI admin kit), copied to the repo root and renamed to `duit-akuh`. It is a starter: the dashboard pages are intentionally blank placeholders (`BlankView`) waiting to be replaced with real features.
+Requirements: `PRD_Keuangan_AI_Web_v1.docx` (v1.1) at the repo root is the source of truth; **`docs/PRD.md` is a readable/greppable text mirror of it** — read the mirror, and re-generate it if the .docx changes. The PRD defines FR01–FR15 and AC01–AC14; cite those IDs when implementing or testing.
+
+**The product is chat-first.** One persistent conversation is the main surface and must be able to start _and finish_ every feature in a release (FR14). The dashboard is a companion view over the same data, not the primary UI. The current codebase does not reflect this yet — see "Current state vs. the PRD".
+
+The codebase is the **Minimal UI v7.7.0 `starter-next-js`** template (commercial MUI admin kit), copied to the repo root and renamed to `duit-akuh` (the PRD leaves the product name undecided). It is a starter: the dashboard pages are intentionally blank placeholders (`BlankView`) waiting to be replaced with real features.
+
+## Domain invariants (from the PRD)
+
+These are correctness rules, not preferences. Most of AC01–AC14 exist to catch violations of them.
+
+- **Never use floating point for money.** Store integer rupiah or fixed-precision decimal (FR03).
+- **Money must never be double-counted.** Transfers, top-ups and cash withdrawals are one atomic two-sided transaction and are _neither_ income nor expense; admin fees are a separate expense (FR02/AC02). Credit-card spending is an expense at purchase time and increases card debt — paying the bill reduces bank balance and debt but must **not** re-count the expense (AC03). Opening balance is not income (AC01).
+- **Allocations are virtual, not assets.** Allocating to a goal never increases net assets; total active allocations on an account may not exceed its positive balance (FR07/AC05).
+- **Credit limits are not money.** Available limit is never an asset nor "uang bebas pakai" (FR01/FR09).
+- **Every write is idempotent.** Each posting carries a unique ID and an idempotency key; a confirmation submitted twice must produce exactly one transaction (FR03/AC04).
+- **Confirm before every financial write**, showing the impact first; reads, filters and simulations need no confirmation (FR05). Ambiguous references (e.g. "BCA" matching two accounts) must be clarified, never guessed (AC04).
+- **Nothing is deleted silently.** Corrections create a traceable revision/reversal plus an audit event with before/after versions (FR02/AC08).
+- **Simulations never mutate real data** until the user explicitly applies the plan (FR11/AC07).
+- **The LLM never computes money.** It proposes structured tool calls; the backend authorizes, validates and computes via tested functions. Receipt/statement content is data, never instructions (FR06 "Batas dan mekanisme AI").
+- **Hard isolation per owner.** Every API enforces per-owner authorization; zero cross-account access is a release gate (AC08).
+- Never send full card numbers, PINs, bank OTPs or banking credentials to a model.
 
 ## Commands
 
@@ -114,6 +134,17 @@ Path alias: `src/...` resolves from the repo root via `jsconfig.json` `baseUrl: 
 ### SVG imports
 
 `@svgr/webpack` is wired for both bundlers in `next.config.mjs` — `*.svg` imports become React components. Note the config duplicates the rule for webpack and Turbopack; changes must be made in both places.
+
+## Current state vs. the PRD
+
+The repo is currently **frontend scaffolding only**. Nothing in the PRD's domain is implemented yet. Known gaps, in the PRD's own suggested build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
+
+- **No backend, no database, no ledger.** The PRD suggests Next.js + FastAPI + PostgreSQL + Docker Compose but explicitly leaves the framework decision open. Nothing has been chosen or built.
+- **No chat surface.** `/` currently redirects to `/dashboard`, and the dashboard is the only layout. A chat-first app needs chat as the default route and mobile tab.
+- **Auth points at the vendor demo API** (see `CONFIG` below) and must be replaced before any real data exists.
+- **No AI provider.** The PRD requires an adapter layer so the provider can be swapped; nothing is wired.
+- **Charts are not installed** — see the reference-template note below.
+- **No test runner**, while AC01–AC14 are concrete, checkable scenarios that want automated coverage. The ledger invariants above are exactly the kind of logic that needs tests before features pile on top.
 
 ## Reference template (`_reference/`, gitignored)
 
