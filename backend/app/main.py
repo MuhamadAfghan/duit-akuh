@@ -20,6 +20,7 @@ from .api.routes_budgets import router as budgets_router
 from .api.routes_chat import router as chat_router
 from .api.routes_goals import router as goals_router
 from .api.routes_reports import router as reports_router
+from .api.routes_simulations import router as simulations_router
 from .api.routes_transactions import router as transactions_router
 from .config import get_settings
 from .domain.errors import DomainError
@@ -63,6 +64,7 @@ app.include_router(chat_router)
 app.include_router(reports_router)
 app.include_router(goals_router)
 app.include_router(budgets_router)
+app.include_router(simulations_router)
 
 
 @app.get("/health", tags=["ops"])

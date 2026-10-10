@@ -13,6 +13,7 @@ with its impact; they never write to the ledger.
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -29,6 +30,7 @@ from ...domain.balances import (
 )
 from ...domain.errors import AmbiguousAccount, DomainError
 from ...domain.periods import PeriodError, resolve_period
+from ...domain.simulation import SimulationError, simulate_deposit, simulate_regular_saving
 from ...models import (
     LIQUID_TYPES,
     Account,
@@ -44,6 +46,7 @@ from ...models import (
 from ...money import MoneyError, positive_rupiah, rupiah
 from ..accounts import resolve_account
 from ..budgets import report as budget_report
+from ..capacity import estimate as estimate_capacity
 from ..drafts import build_legs
 from ..goals import headroom, saved_for
 from ..posting import account_snapshots
@@ -280,6 +283,63 @@ def tool_propose_budget(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
         "saved": False,
         "note": "Menunggu konfirmasi pengguna",
     }
+
+
+def tool_run_simulation(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    """Run a calculator. Changes nothing, so it needs no confirmation (AC07)."""
+    kind = args.get("kind")
+
+    try:
+        if kind == "deposit":
+            result = simulate_deposit(
+                principal=args.get("principal"),
+                annual_rate_percent=args.get("annual_rate_percent", 0),
+                months=args.get("months"),
+                tax_percent=args.get("tax_percent"),
+                fees=args.get("fees") or 0,
+            )
+            out = asdict(result)
+            if not result.complete:
+                out["warning"] = (
+                    "Tarif pajak belum diketahui, jadi hasil bersih ini belum "
+                    "lengkap. Jangan sebut angkanya sebagai pasti."
+                )
+            return out
+
+        if kind == "saving":
+            # The model reaches for "months" as often as "periods" -
+            # both mean the same thing here, and refusing one just
+            # pushes it into doing the arithmetic itself, which is the
+            # one thing it must not do.
+            periods = args.get("periods") or args.get("months") or 0
+
+            return asdict(
+                simulate_regular_saving(
+                    target=args.get("target"),
+                    initial=args.get("initial") or 0,
+                    periods=periods,
+                )
+            )
+
+        if kind == "capacity":
+            user = db.get(User, user_id)
+            capacity = estimate_capacity(db, user_id, timezone_name=getattr(user, "timezone", None))
+            return {
+                "reliable_income": capacity.inputs.reliable_income,
+                "cash_expenses": capacity.inputs.cash_expenses,
+                "obligations": capacity.inputs.obligations,
+                "per_month": capacity.available,
+                "months_observed": capacity.months_observed,
+                "reliable": capacity.reliable,
+                "notes": capacity.notes,
+            }
+    except (SimulationError, MoneyError) as exc:
+        # Spelled out because the observed failure mode is the model
+        # quietly doing the sum itself when a tool refuses - and a
+        # plausible-looking figure it invented is worse than no answer.
+        raise ToolError(f"{exc} Jangan hitung sendiri; minta pengguna melengkapi datanya.") from exc
+
+    raise ToolError(f"Jenis simulasi '{kind}' tidak dikenal. Jangan hitung sendiri.")
 
 
 def tool_find_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
@@ -632,6 +692,7 @@ HANDLERS = {
     "propose_transactions": tool_propose_transactions,
     "get_goals": tool_get_goals,
     "get_budgets": tool_get_budgets,
+    "run_simulation": tool_run_simulation,
     "propose_budget": tool_propose_budget,
     "propose_account_change": tool_propose_account_change,
     "propose_goal": tool_propose_goal,

@@ -783,3 +783,92 @@ def test_a_draft_goes_stale_when_the_balance_moves_underneath_it(chat):
 
     assert response.status_code == 409
     assert chat.get("/summary").json()["allocated"] == 0
+
+
+# ----------------------------------------------------------------------
+# Simulation through chat (FR11, AC07)
+# ----------------------------------------------------------------------
+
+
+def test_a_simulation_needs_no_confirmation_and_changes_nothing(chat):
+    make_account(chat, "BCA", balance=10_000_000, alias="bca")
+
+    before = chat.get("/summary").json()
+
+    chat.adapter.queue(
+        tool(
+            "run_simulation",
+            {
+                "kind": "deposit",
+                "principal": 10_000_000,
+                "annual_rate_percent": "4",
+                "months": 6,
+                "tax_percent": "20",
+            },
+        )
+    )
+    chat.adapter.queue(text("Bunga bersihnya Rp160.000."))
+
+    result = send(chat, "kalau 10 juta didepositokan 4% 6 bulan dapat berapa?")
+
+    assert result["drafts"] == [], "a calculator raises no draft"
+    assert chat.get("/summary").json() == before
+
+    output = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
+    assert '"net_interest": 160000' in output["content"]
+
+
+def test_an_unknown_tax_rate_warns_the_model_not_to_claim_certainty(chat):
+    chat.adapter.queue(
+        tool(
+            "run_simulation",
+            {
+                "kind": "deposit",
+                "principal": 10_000_000,
+                "annual_rate_percent": "4",
+                "months": 6,
+            },
+        )
+    )
+    chat.adapter.queue(text("Perkiraannya Rp200.000, tapi pajaknya belum dihitung."))
+
+    send(chat, "deposito 10 juta 4% 6 bulan")
+
+    output = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
+    assert '"complete": false' in output["content"]
+    assert "belum lengkap" in output["content"]
+
+
+def test_the_saving_simulation_accepts_months_as_well_as_periods(chat):
+    """Regression guard for a real failure.
+
+    The model called run_simulation with "months" where the schema says
+    "periods". The tool refused, and the model then did the arithmetic
+    itself - right by luck that time, but inventing figures is exactly
+    what the PRD forbids it to do.
+    """
+    chat.adapter.queue(
+        tool(
+            "run_simulation",
+            {"kind": "saving", "target": 15_000_000, "initial": 3_000_000, "months": 6},
+        )
+    )
+    chat.adapter.queue(text("Rp2 juta per bulan."))
+
+    send(chat, "ngumpulin 15 juta dalam 6 bulan, dana awal 3 juta")
+
+    output = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
+
+    assert '"per_period": 2000000' in output["content"]
+    assert "error" not in output["content"]
+
+
+def test_a_failed_simulation_tells_the_model_not_to_compute_it_itself(chat):
+    chat.adapter.queue(tool("run_simulation", {"kind": "saving", "target": 15_000_000}))
+    chat.adapter.queue(text("Berapa lama mau menabungnya?"))
+
+    send(chat, "ngumpulin 15 juta")
+
+    output = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][0]
+
+    assert "Jangan hitung sendiri" in output["content"]

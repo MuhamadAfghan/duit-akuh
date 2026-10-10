@@ -113,6 +113,45 @@ READ_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "run_simulation",
+            "description": (
+                "Hitung simulasi. TIDAK mengubah data apa pun, jadi tidak perlu "
+                "konfirmasi. Tiga jenis: 'deposit' untuk bunga deposito, 'saving' "
+                "untuk menabung rutin tanpa bunga, 'capacity' untuk memperkirakan "
+                "kemampuan menabung per bulan dari riwayat pengguna."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["deposit", "saving", "capacity"]},
+                    "principal": dict(_AMOUNT, description="Pokok, untuk deposit"),
+                    "annual_rate_percent": {
+                        "type": "string",
+                        "description": "Bunga per tahun, contoh '4' atau '4.25'",
+                    },
+                    "months": {"type": "integer", "description": "Tenor dalam bulan"},
+                    "tax_percent": {
+                        "type": "string",
+                        "description": (
+                            "Tarif pajak. Kosongkan jika pengguna tidak menyebut - "
+                            "hasilnya akan ditandai belum lengkap, jangan diklaim pasti."
+                        ),
+                    },
+                    "fees": dict(_AMOUNT, description="Biaya, 0 jika tidak ada"),
+                    "target": dict(_AMOUNT, description="Target, untuk saving"),
+                    "initial": dict(_AMOUNT, description="Dana awal, untuk saving"),
+                    "periods": {
+                        "type": "integer",
+                        "description": "Jumlah setoran untuk saving (boleh juga pakai 'months')",
+                    },
+                },
+                "required": ["kind"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_transactions",
             "description": (
                 "Daftar transaksi TERBARU (bukan hasil pencarian per kata kunci "

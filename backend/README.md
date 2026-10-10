@@ -306,10 +306,48 @@ message naming a wallet ("pakai BCA") is a transaction, because budgets
 have no wallet. Budget drafts also show the old limit alongside the new
 one, so replacing one is visible before it is confirmed.
 
+## Simulation (FR10–FR12, AC07)
+
+`POST /simulations/deposit`, `/saving`, and `GET /capacity`. Stateless:
+a simulation changes nothing until the user applies the plan, and a test
+asserts the ledger is byte-identical afterwards.
+
+**`app/domain/simulation.py` uses `Fraction`, not `float` and not even
+`Decimal`.** This is the only place in the codebase that handles
+fractions of a rupiah, and the PRD asks for intermediate precision with
+a single rounding at the end. `float` is the obvious offender, but
+`Decimal` fails too once a tenor like 13/12 becomes a decimal early: the
+repeating expansion is cut at 28 digits, and 7,500,000 x 3.33% x 13/12 —
+exactly 270,562.5 — comes out as 270,562.4999… and rounds to the wrong
+rupiah. A `Fraction` keeps 13/12 as 13/12 and divides once, at the end.
+`test_a_value_sitting_exactly_on_half_a_rupiah_rounds_up` guards it.
+
+A rate may be a float; an amount may not. A rate is a percentage, parsed
+via its repr so 4.25 is read as 17/4, while `principal` and `fees` still
+go through the integer-rupiah guards.
+
+An unknown tax rate yields `complete: false`. The arithmetic still runs,
+but the PRD forbids presenting a net figure as settled when a component
+is missing, so the flag travels with the result.
+
+The capacity model (FR10) is a **cash-flow projection, not a spending
+report**, and the difference is deliberate: a card bill counts when it
+is paid, and the purchases that formed it are excluded from the same
+horizon. Counting both would subtract the same money twice. The
+reporting module does the opposite — spending counts at purchase time —
+and both are right for their own question.
+
+### A failure worth remembering
+
+The model called `run_simulation` with `months` where the schema said
+`periods`. The tool refused, and the model then did the arithmetic
+itself — correct that time, by luck. Inventing figures is the one thing
+the PRD forbids it, so the tool now accepts either spelling, and every
+simulation error tells the model in so many words not to compute it
+itself.
+
 ## Not built yet
 
-- **Simulation** (FR10–FR12) — the last tool in the PRD's table,
-  `run_simulation`, stays withheld until it exists.
 - **Deposit schedules.** Goals carry a target date but no deposit dates,
   so `remaining_deposits` is supplied by the caller rather than derived.
 - **Voice and receipt OCR** (stage 2). The adapter has `vision` and
