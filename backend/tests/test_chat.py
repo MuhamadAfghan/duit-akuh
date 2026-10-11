@@ -1981,3 +1981,96 @@ def test_a_category_with_no_budget_is_not_called_within_one(chat):
 
     assert kopi["limit"] is None
     assert kopi["over"] is None
+
+
+# ----------------------------------------------------------------------
+# The model narrating a draft instead of raising one.
+
+
+def test_a_reply_that_asks_the_user_to_confirm_is_retried(chat):
+    """Observed against the real model: it lists the entries, asks
+    "apakah ini sudah benar?" and waits. There is no card, so "ok"
+    does nothing and the person is stuck repeating themselves."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(
+        text(
+            "Baik, saya akan catat transaksi tadi pagi Anda:\n"
+            "1. **Obat**: Rp 50.000 dari **gopay**\n\n"
+            "Apakah ini sudah benar? Jika ada yang perlu disesuaikan, beri tahu saya."
+        )
+    )
+    # The nudge round: this time it calls the tool.
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 50_000, "from_account": "bca"}]},
+        )
+    )
+
+    result = send(chat, "tadi pagi beli obat 50rb")
+
+    assert len(result["drafts"]) == 1
+    assert result["drafts"][0]["payload"]["amount"] == 50_000
+
+
+def test_akan_catat_counts_as_claiming_a_draft(chat):
+    """The guard used to require "saya catat" as adjacent words, so
+    every phrasing with "akan" between them went through untouched."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(text("Oke, saya akan catat pengeluaran itu ya."))
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 35_000, "from_account": "bca"}]},
+        )
+    )
+
+    assert len(send(chat, "makan 35rb pakai bca")["drafts"]) == 1
+
+
+def test_an_ordinary_answer_is_not_retried(chat):
+    """A false positive would push the model to invent a draft nobody
+    asked for, so the guard has to leave plain answers alone."""
+    chat.adapter.queue(text("Saldo BCA kamu Rp2.255.000, naik dari minggu lalu."))
+
+    result = send(chat, "saldo bca berapa?")
+
+    assert result["drafts"] == []
+    assert result["reply"].startswith("Saldo BCA")
+    # One round only: a retry would have consumed a second script entry.
+    assert len(chat.adapter.calls) == 1
+
+
+def test_asking_which_wallet_is_not_retried(chat):
+    """Asking about an ambiguous wallet is correct behaviour (AC04).
+    Nudging it would turn a good question into a guess."""
+    chat.adapter.queue(text("Kantong mana yang kamu maksud, BCA Utama atau BCA Gaji?"))
+
+    result = send(chat, "makan 35rb pakai bca")
+
+    assert result["drafts"] == []
+    assert len(chat.adapter.calls) == 1
+
+
+def test_a_refused_tool_says_why_instead_of_generic_advice(chat):
+    """The retry's fallback used to tell people to "sebutkan nominal dan
+    kantongnya" even when the real problem was that two of their wallets
+    are called BCA - advice about a problem they did not have."""
+    make_account(chat, "BCA Utama", balance=1_000_000, alias="utama")
+    make_account(chat, "BCA Gaji", balance=1_000_000, alias="gaji")
+
+    chat.adapter.queue(text("Saya akan catat pengeluaran itu."))
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": 35_000, "from_account": "BCA"}]},
+        )
+    )
+
+    result = send(chat, "makan 35rb pakai bca")
+
+    assert result["drafts"] == []
+    assert "BCA" in result["reply"]
+    assert "35rb pakai BCA" not in result["reply"]

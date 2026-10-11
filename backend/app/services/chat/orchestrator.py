@@ -64,7 +64,29 @@ FAILURE_REPLY = (
 #: only to catch it claiming a draft it never created - see
 #: `_claims_a_draft`.
 _CLAIM_WORDS = re.compile(
-    r"\b(draft|tersimpan|disimpan|dicatat|saya catat|aku catat)\b",
+    r"\b(draft"
+    r"|tersimpan|disimpan|dicatat"
+    # "saya akan catat", "aku akan mencatat", "akan saya catat". The
+    # first version of this required the two words to be adjacent, so
+    # every phrasing with "akan" between them walked straight through —
+    # which is the one the model actually uses.
+    r"|(saya|aku)?\s*akan\s*(saya|aku)?\s*(men)?catat"
+    r"|(saya|aku)\s+(men)?catat"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: A reply that asks the person to confirm, when no card was raised.
+#:
+#: The same failure wearing different words, and the more common one in
+#: practice: the model lists the entries, asks "apakah ini sudah
+#: benar?", and waits. There is nothing to answer — no card, no draft —
+#: so "ok" only makes it ask again, which is the loop this catches.
+_ASKS_TO_CONFIRM = re.compile(
+    r"(apakah\s+(ini|itu|semua|data|rincian)?\s*(sudah\s+)?(benar|sesuai|betul)"
+    r"|sudah\s+(benar|sesuai)\s*\?"
+    r"|mohon\s+(di)?koreksi"
+    r"|beri\s*tahu\s+(saya|aku)\s+(jika|kalau)\s+(ada|ini|itu|salah|perlu))",
     re.IGNORECASE,
 )
 
@@ -72,10 +94,14 @@ _CLAIM_WORDS = re.compile(
 #: calling a tool. Bounded to a single retry: if it will not comply twice,
 #: the honest thing is to say so rather than keep burning GPU slots.
 _NUDGE = (
-    "Kamu menjawab seolah draft sudah dibuat, padahal kamu tidak memanggil "
-    "tool apa pun, jadi tidak ada draft dan pengguna tidak melihat kartu. "
-    "Panggil tool propose_* sekarang dengan data yang sama. Jangan menjawab "
-    "dengan teks saja."
+    "Kamu menjawab seolah draft sudah dibuat atau meminta pengguna "
+    "mengonfirmasi lewat teks, padahal kamu tidak memanggil tool apa pun. "
+    "Tidak ada draft, tidak ada kartu, dan pengguna tidak punya apa pun "
+    "untuk dikonfirmasi - kalau dia menjawab 'ok' tidak akan terjadi apa-apa. "
+    "Panggil tool propose_* sekarang dengan data yang sama, sekaligus semua "
+    "itemnya dalam satu panggilan. Kartu yang akan bertanya, bukan kamu. "
+    "Kalau ternyata pengguna memang tidak minta mencatat apa pun, jawab "
+    "biasa saja tanpa membuat draft."
 )
 
 HONEST_FALLBACK = (
@@ -90,10 +116,13 @@ def _claims_a_draft(reply: str) -> bool:
     Deliberately crude. It exists because the opposite failure is severe:
     the model sometimes describes a draft in prose without calling a
     tool, and the user is then told their transaction was recorded when
-    nothing exists. A false positive costs one extra model round; a false
-    negative misleads someone about their money.
+    nothing exists. A false positive costs one extra model round - and
+    the nudge tells the model to answer normally if nothing was meant to
+    be recorded, so it costs nothing else. A false negative misleads
+    someone about their money, or leaves them answering "ok" to a
+    question no card was ever asked.
     """
-    return bool(_CLAIM_WORDS.search(reply))
+    return bool(_CLAIM_WORDS.search(reply) or _ASKS_TO_CONFIRM.search(reply))
 
 
 @dataclass
@@ -495,15 +524,29 @@ async def _retry_with_nudge(
     _log_ai(db, user_id=user_id, result=result, started=started, status="ok")
 
     drafts: list[Draft] = []
+    refusals: list[str] = []
 
     for call in result.tool_calls:
         output = dispatch(db, user_id, call.name, call.arguments)
 
-        if call.name in PROPOSE_TOOL_NAMES and "error" not in output:
+        if call.name not in PROPOSE_TOOL_NAMES:
+            continue
+
+        if "error" in output:
+            refusals.append(str(output["error"]))
+        else:
             drafts.extend(_collect_drafts(db, user_id, output))
 
     if drafts:
         return (result.content.strip() or "Ini draftnya. Periksa dulu, lalu konfirmasi."), drafts
+
+    # The tool said why it would not build the draft, in a sentence
+    # already written for a person. Swallowing that and offering
+    # "sebutkan nominal dan kantongnya" instead is advice about a
+    # problem the user may not have - they were told to rephrase when
+    # the real answer was that two of their wallets are called BCA.
+    if refusals:
+        return refusals[0], []
 
     return HONEST_FALLBACK, []
 

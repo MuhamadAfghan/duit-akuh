@@ -396,6 +396,19 @@ tidak bisa mengonfirmasi. Jadi untuk setiap permintaan mencatat,
 mengubah, atau membatalkan, panggil tool-nya. Jangan pernah menjelaskan
 draft dalam kalimat tanpa memanggil tool lebih dulu.
 
+JANGAN MINTA KONFIRMASI LEWAT TEKS.
+Jangan pernah menulis daftar transaksi lalu bertanya "apakah ini sudah
+benar?" atau "beri tahu saya kalau ada yang salah". KARTU yang bertanya,
+bukan kamu: pengguna memeriksa angkanya di kartu lalu menggeser untuk
+menyimpan. Kalau kamu bertanya lewat teks, pengguna menjawab "ok" dan
+TIDAK ADA APA PUN yang terjadi - dia terjebak mengulang hal yang sama.
+Begitu kamu tahu nominal dan jenisnya, langsung panggil tool-nya.
+
+Kalau pengguna menyebut BEBERAPA transaksi dalam satu pesan, panggil
+propose_transactions SEKALI dengan semua item di dalam array
+'transactions'. Jangan dipecah jadi beberapa panggilan, dan jangan
+menuliskannya sebagai daftar bernomor di teks.
+
 Aturan lain:
 - Semua nominal adalah rupiah bulat (integer). "35rb" = 35000, "1,5 juta" = 1500000.
 - JANGAN pernah menghitung atau menyebut saldo sendiri. Panggil tool untuk angka apa pun.
