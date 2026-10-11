@@ -26,12 +26,21 @@ export const themeConfig = {
    * Palette
    *************************************** */
   palette: {
+    /**
+     * lega green. Deliberately not Gojek's #00AA13: the interface
+     * borrows how Asphalt is put together, but a brand colour is not a
+     * pattern to borrow.
+     *
+     * `main` on white is 3.6:1 — fine for large text, icons and fills,
+     * short of AA for body copy. Anything carrying a sentence in white
+     * uses ink, and text on `lighter` uses `dark` (6.6:1).
+     */
     primary: {
-      lighter: '#C8FAD6',
-      light: '#5BE49B',
-      main: '#00A76F',
-      dark: '#007867',
-      darker: '#004B50',
+      lighter: '#D9F3E6',
+      light: '#5FD3A2',
+      main: '#009A5B',
+      dark: '#006B45',
+      darker: '#00482F',
       contrastText: '#FFFFFF',
     },
     secondary: {

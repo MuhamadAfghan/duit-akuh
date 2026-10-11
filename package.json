@@ -1,8 +1,8 @@
 {
-  "name": "duit-akuh",
+  "name": "lega",
   "author": "AfghanAlzena",
   "version": "0.1.0",
-  "description": "Web pencatatan keuangan dengan integrasi AI",
+  "description": "Catat keuangan lewat percakapan",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3033",
