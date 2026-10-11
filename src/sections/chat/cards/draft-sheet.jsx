@@ -74,7 +74,11 @@ export function DraftSheet({
     setError(null);
 
     try {
-      await onRevise(patch);
+      // The draft id travels with the patch on purpose. The patch is
+      // built from *this* card's payload, so it has to be applied to
+      // *this* card — the sheet's own id is tracked separately in the
+      // view and the two can drift apart while a chat turn is streaming.
+      await onRevise(patch, card.draftId);
     } catch (reason) {
       setError(reason?.message ?? 'Gagal mengubah draft. Coba lagi.');
     }

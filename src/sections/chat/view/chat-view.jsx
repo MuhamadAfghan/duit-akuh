@@ -502,9 +502,19 @@ export function ChatView() {
   );
 
   const handleRevise = useCallback(
-    async (patch) => {
-      const current = sheetDraftId;
+    async (patch, draftId) => {
+      // The sheet passes the id of the card the patch was built from.
+      // `sheetDraftId` is only a fallback: it tracks which sheet is open,
+      // which is not always the same draft while a turn is streaming.
+      const current = draftId ?? sheetDraftId;
 
+      // Same guard as handleConfirm. Without it a second tap lands on a
+      // draft the first tap has already had replaced server-side.
+      if (!current || busyDrafts.current.has(current)) {
+        return;
+      }
+
+      busyDrafts.current.add(current);
       setDraftBusy(true);
 
       try {
@@ -515,7 +525,22 @@ export function ChatView() {
         // Point the sheet at it, or the next render finds nothing
         // pending under the old id and closes on a successful edit.
         setSheetDraftId(replacement.id);
+      } catch (error) {
+        // 404 means this draft is already gone — revised, confirmed or
+        // cancelled. Re-syncing is the honest recovery: the sheet is
+        // released so the pending-card effect can re-open it on whatever
+        // is actually live. Surfacing "not found" instead left the sheet
+        // pinned to a dead id, where every further tap failed the same
+        // way — one stale card once became 57 refused posts.
+        if (error?.status === 404) {
+          await reload();
+          setSheetDraftId(null);
+          return;
+        }
+
+        throw error;
       } finally {
+        busyDrafts.current.delete(current);
         setDraftBusy(false);
       }
     },
