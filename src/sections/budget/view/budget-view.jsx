@@ -13,26 +13,33 @@ import LinearProgress from '@mui/material/LinearProgress';
 import { paths } from 'src/routes/paths';
 import { RouterLink } from 'src/routes/components';
 
-import { formatRupiah } from 'src/utils/format-money';
-
 import { budgetsApi } from 'src/lib/api';
 
 import { Iconify } from 'src/components/iconify';
 
 import { BudgetForm } from '../budget-form';
-import { SurfaceEmpty, SurfaceHeader } from '../../common';
+import {
+  Bar,
+  Pill,
+  Money,
+  BoardBody,
+  BoardNote,
+  BoardTitle,
+  BoardAction,
+  SurfaceEmpty,
+} from '../../common';
 
 // ----------------------------------------------------------------------
 
 /**
- * Three states, and each one is told in words as well as colour.
- * Colour alone fails for anyone who cannot separate these hues, which
- * the PRD rules out (section 12).
+ * Three states, each told in words as well as colour. Colour alone
+ * fails anyone who cannot separate these hues, which PRD section 12
+ * rules out.
  */
 const STATES = {
-  ok: { label: null, colour: 'primary', tint: null },
-  approaching: { label: 'TIPIS', colour: 'warning', tint: 'warning.lighter' },
-  exceeded: { label: 'LEWAT', colour: 'error', tint: 'error.lighter' },
+  ok: { pill: null, bar: 'good', bg: null, fg: 'text.secondary' },
+  approaching: { pill: 'TIPIS', tone: 'warn', bar: 'warn', bg: '#FFFBEB', fg: '#6B4F00' },
+  exceeded: { pill: 'LEWAT', tone: 'bad', bar: 'bad', bg: '#FDF0F0', fg: '#8E1212' },
 };
 
 export function BudgetView() {
@@ -57,7 +64,7 @@ export function BudgetView() {
     load();
   }, [load]);
 
-  const onRemove = async (category) => {
+  const remove = async (category) => {
     try {
       await budgetsApi.remove(category);
       load();
@@ -67,29 +74,25 @@ export function BudgetView() {
   };
 
   const rows = report?.budgets ?? [];
-  const usedPercent = report?.total_limit
-    ? Math.min((report.total_spent / report.total_limit) * 100, 100)
-    : 0;
+  const used = report?.total_limit ? (report.total_spent / report.total_limit) * 100 : 0;
 
   return (
     <>
-      <SurfaceHeader
+      <BoardTitle
         title="Budget"
         backHref={paths.ringkasan}
         action={
-          <IconButton
-            aria-label="Atur budget"
+          <BoardAction
+            icon="lega:plus"
+            label="Atur budget"
             onClick={() => setEditing({ category: '', amount: '' })}
-            sx={{ width: 44, height: 44, color: 'text.primary' }}
-          >
-            <Iconify icon="mingcute:add-line" width={22} />
-          </IconButton>
+          />
         }
       />
 
       {loading && <LinearProgress />}
 
-      <Box sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', px: 2, pb: 3 }}>
+      <BoardBody>
         {error && (
           <SurfaceEmpty
             icon="solar:danger-triangle-bold"
@@ -100,69 +103,69 @@ export function BudgetView() {
 
         {!error && !loading && rows.length === 0 && (
           <SurfaceEmpty
-            icon="solar:chart-square-outline"
+            icon="lega:chart"
             title="Belum ada budget"
             body="Atur lewat tombol di atas, atau ketik di chat: “budget makan 2 juta per bulan”."
           />
         )}
 
         {!error && rows.length > 0 && (
-          <Stack sx={{ gap: 2, pt: 1 }}>
-            <Card variant="outlined" sx={{ p: 2, borderRadius: 2.5 }}>
-              <Stack
-                direction="row"
-                sx={{ alignItems: 'flex-end', justifyContent: 'space-between' }}
-              >
-                <Box>
-                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    Kepakai {report.label}
+          <>
+            <Card sx={{ p: 2.5, borderRadius: 3 }}>
+              <Stack direction="row" sx={{ gap: 2, alignItems: 'flex-end' }}>
+                <Box sx={{ flexGrow: 1 }}>
+                  <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'text.secondary' }}>
+                    Kepakai {report.label.toLowerCase()}
                   </Typography>
-                  <Typography variant="h4" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {formatRupiah(report.total_spent)}
-                  </Typography>
+                  <Money
+                    amount={report.total_spent}
+                    plain
+                    sx={{ mt: 0.25, fontSize: 34, lineHeight: '40px', fontWeight: 800 }}
+                  />
                 </Box>
-                <Typography variant="body2" sx={{ pb: 0.5, color: 'text.secondary' }}>
-                  / {formatRupiah(report.total_limit)}
+                <Typography
+                  sx={{ fontSize: 15, fontWeight: 700, color: 'text.secondary', pb: 0.5 }}
+                >
+                  / <Money amount={report.total_limit} plain sx={{ display: 'inline' }} />
                 </Typography>
               </Stack>
 
-              <LinearProgress
-                variant="determinate"
-                value={usedPercent}
-                sx={{ mt: 1.5, height: 12, borderRadius: 999 }}
-              />
+              <Box sx={{ mt: 1.75 }}>
+                <Bar value={used} height={14} />
+              </Box>
 
-              <Typography variant="body2" sx={{ mt: 1.25 }}>
-                Sisa{' '}
-                <Box component="span" sx={{ fontWeight: 'fontWeightSemiBold' }}>
-                  {formatRupiah(report.total_remaining)}
-                </Box>
+              <Typography sx={{ mt: 1.25, fontSize: 13, fontWeight: 700 }}>
+                Sisa <Money amount={report.total_remaining} sx={{ display: 'inline' }} />
               </Typography>
 
-              <Typography
-                variant="caption"
-                sx={{ mt: 1.5, display: 'block', color: 'text.secondary' }}
-              >
-                Budget itu rencana belanja, bukan uang yang disisihkan. Angka “bebas pakai” lu nggak
-                berkurang karena ini.
-              </Typography>
+              <Box sx={{ mt: 1.75 }}>
+                <BoardNote>
+                  Budget itu rencana belanja, bukan uang yang disisihkan. Angka{' '}
+                  <strong>bebas pakai</strong> lu nggak berkurang karena ini.
+                </BoardNote>
+              </Box>
             </Card>
 
-            {rows.map((row) => (
-              <BudgetRow
-                key={row.category}
-                row={row}
-                onEdit={() => setEditing({ category: row.category, amount: row.limit })}
-                onRemove={() => onRemove(row.category)}
-              />
-            ))}
+            <Card sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
+              {rows.map((row, index) => (
+                <BudgetRow
+                  key={row.category}
+                  row={row}
+                  first={index === 0}
+                  onEdit={() => setEditing({ category: row.category, amount: row.limit })}
+                  onRemove={() => remove(row.category)}
+                />
+              ))}
+            </Card>
 
-            <Typography variant="caption" sx={{ textAlign: 'center', color: 'text.secondary' }}>
+            <Typography
+              sx={{ fontSize: 12, fontWeight: 600, textAlign: 'center', color: 'text.secondary' }}
+            >
               Di chat: “budget makan 2 juta per bulan” atau “hiburan kelebihan berapa?”
             </Typography>
-          </Stack>
+          </>
         )}
-      </Box>
+      </BoardBody>
 
       <BudgetForm
         open={Boolean(editing)}
@@ -179,78 +182,80 @@ export function BudgetView() {
 
 // ----------------------------------------------------------------------
 
-function BudgetRow({ row, onEdit, onRemove }) {
+function BudgetRow({ row, first, onEdit, onRemove }) {
   const state = STATES[row.state] ?? STATES.ok;
   const over = row.remaining < 0;
 
   return (
-    <Card
-      variant="outlined"
-      sx={{ p: 2, borderRadius: 2.5, ...(state.tint && { bgcolor: state.tint }) }}
+    <Box
+      sx={{
+        p: 2,
+        ...(state.bg && { bgcolor: state.bg }),
+        ...(!first && { borderTop: '1px solid', borderColor: 'grey.200' }),
+      }}
     >
       <Stack direction="row" sx={{ gap: 1, alignItems: 'center' }}>
-        <Typography variant="subtitle2" sx={{ flexGrow: 1, minWidth: 0 }} noWrap>
+        <Typography noWrap sx={{ flexGrow: 1, minWidth: 0, fontSize: 15, fontWeight: 800 }}>
           {row.category}
         </Typography>
 
-        {state.label && (
-          <Box
-            component="span"
-            sx={{
-              px: 1,
-              py: 0.25,
-              borderRadius: 999,
-              typography: 'caption',
-              fontWeight: 'fontWeightBold',
-              color: `${state.colour}.contrastText`,
-              bgcolor: `${state.colour}.main`,
-            }}
-          >
-            {state.label}
-          </Box>
-        )}
+        {state.pill && <Pill tone={state.tone}>{state.pill}</Pill>}
 
-        <IconButton size="small" aria-label={`Ubah budget ${row.category}`} onClick={onEdit}>
+        <IconButton
+          size="small"
+          aria-label={`Ubah budget ${row.category}`}
+          onClick={onEdit}
+          sx={{ color: 'inherit' }}
+        >
           <Iconify icon="solar:pen-bold" width={16} />
         </IconButton>
-        <IconButton size="small" aria-label={`Hapus budget ${row.category}`} onClick={onRemove}>
+        <IconButton
+          size="small"
+          aria-label={`Hapus budget ${row.category}`}
+          onClick={onRemove}
+          sx={{ color: 'inherit' }}
+        >
           <Iconify icon="solar:trash-bin-trash-bold" width={16} />
         </IconButton>
       </Stack>
 
-      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-        {formatRupiah(row.spent)} dari {formatRupiah(row.limit)}
+      <Typography sx={{ fontSize: 12, fontWeight: 600, color: state.fg }}>
+        <Money amount={row.spent} plain sx={{ display: 'inline' }} /> dari{' '}
+        <Money amount={row.limit} plain sx={{ display: 'inline' }} />
       </Typography>
 
-      <LinearProgress
-        variant="determinate"
-        value={Math.min(row.percent, 100)}
-        color={state.colour}
-        sx={{ mt: 1.25, height: 10, borderRadius: 999 }}
-      />
+      <Box sx={{ mt: 1.25 }}>
+        <Bar value={Math.min(row.percent, 100)} tone={state.bar} />
+      </Box>
 
-      <Stack direction="row" sx={{ mt: 0.75, justifyContent: 'space-between' }}>
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+      <Stack direction="row" sx={{ mt: 0.75, gap: 2, justifyContent: 'space-between' }}>
+        <Typography sx={{ fontSize: 12, fontWeight: 600, color: state.fg }}>
           {row.percent}% terpakai
         </Typography>
-        <Typography variant="caption" sx={{ fontWeight: 'fontWeightBold' }}>
+        <Typography sx={{ fontSize: 12, fontWeight: 800, color: state.fg }}>
           {over ? 'Lewat ' : 'Sisa '}
-          {formatRupiah(Math.abs(row.remaining))}
+          <Money amount={Math.abs(row.remaining)} plain sx={{ display: 'inline' }} />
         </Typography>
       </Stack>
 
       {over && (
         <Button
           fullWidth
-          variant="outlined"
-          color="inherit"
           component={RouterLink}
           href={paths.data}
-          sx={{ mt: 1.5, minHeight: 44 }}
+          sx={{
+            mt: 1.5,
+            minHeight: 44,
+            fontWeight: 800,
+            borderRadius: 999,
+            color: 'common.white',
+            bgcolor: 'grey.800',
+            '&:hover': { bgcolor: 'grey.700' },
+          }}
         >
           Lihat transaksinya
         </Button>
       )}
-    </Card>
+    </Box>
   );
 }

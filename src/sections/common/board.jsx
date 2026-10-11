@@ -123,6 +123,8 @@ export function HeroCard({ label, amount, caption, children }) {
 
       <Money amount={amount} sx={{ mt: 0.25, fontSize: 36, lineHeight: '44px', fontWeight: 800 }} />
 
+      {children}
+
       {caption && (
         <Typography
           sx={{ mt: 1.5, fontSize: 12, lineHeight: 1.5, fontWeight: 600, color: 'grey.500' }}
@@ -130,8 +132,6 @@ export function HeroCard({ label, amount, caption, children }) {
           {caption}
         </Typography>
       )}
-
-      {children}
     </Card>
   );
 }
@@ -352,6 +352,48 @@ export function Bar({ value, tone = 'good', height = 10 }) {
           bgcolor: fills[tone] ?? fills.good,
         }}
       />
+    </Box>
+  );
+}
+
+/**
+ * The progress ring from the Target board.
+ *
+ * Capped at 100: a ring past full says nothing, and any excess is
+ * reported separately as surplus (FR07). The figure is drawn inside
+ * rather than beside it, so the shape is never the only signal.
+ */
+export function Ring({ percent, tone = 'good', size = 64 }) {
+  const colours = { good: '#009A5B', warn: '#C79000', muted: '#8A9298' };
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+  const filled = (Math.min(Math.max(percent, 0), 100) / 100) * circumference;
+
+  return (
+    <Box
+      component="svg"
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      role="img"
+      aria-label={`Terkumpul ${percent} persen`}
+      sx={{ flexShrink: 0 }}
+    >
+      <circle cx="32" cy="32" r={radius} fill="none" stroke="#EEEFF0" strokeWidth="8" />
+      <circle
+        cx="32"
+        cy="32"
+        r={radius}
+        fill="none"
+        stroke={colours[tone] ?? colours.good}
+        strokeWidth="8"
+        strokeLinecap="round"
+        strokeDasharray={`${filled} ${circumference}`}
+        transform="rotate(-90 32 32)"
+      />
+      <text x="32" y="37" textAnchor="middle" fontSize="16" fontWeight="800" fill="#0B0D0E">
+        {percent}%
+      </text>
     </Box>
   );
 }
