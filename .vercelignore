@@ -1,0 +1,12 @@
+# Vercel builds the Next.js app only. Everything below is either a
+# different runtime, a local artifact, or vendor material that would just
+# slow the build down.
+
+backend/
+deploy/
+_reference/
+docs/
+.github/
+
+*.docx
+*.log
