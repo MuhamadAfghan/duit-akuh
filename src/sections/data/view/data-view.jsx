@@ -21,12 +21,32 @@ import {
   ListCard,
   BoardBody,
   RowAvatar,
+  FilterChip,
   BoardTitle,
   RowDivider,
   SurfaceEmpty,
 } from '../../common';
 
 // ----------------------------------------------------------------------
+
+/** Only the keywords the backend actually resolves (domain/periods.py). */
+const PERIODS = [
+  { value: 'bulan_ini', label: 'Bulan ini' },
+  { value: 'minggu_ini', label: 'Minggu ini' },
+  { value: 'bulan_lalu', label: 'Bulan lalu' },
+  { value: '30_hari', label: '30 hari' },
+  { value: 'tahun_ini', label: 'Tahun ini' },
+  { value: 'semua', label: 'Semua waktu' },
+];
+
+const TYPE_FILTERS = [
+  { value: null, label: 'Semua jenis' },
+  { value: 'expense', label: 'Pengeluaran' },
+  { value: 'income', label: 'Pemasukan' },
+  { value: 'transfer', label: 'Pindah kantong' },
+  { value: 'card_payment', label: 'Bayar kartu' },
+  { value: 'refund', label: 'Refund' },
+];
 
 const TYPES = {
   opening: { label: 'Saldo awal', icon: 'lega:wallet', tone: 'grey', note: 'bukan pemasukan' },
@@ -106,23 +126,32 @@ function dayLabel(date) {
 
 export function DataView() {
   const [transactions, setTransactions] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [names, setNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [period, setPeriod] = useState('bulan_ini');
+  const [type, setType] = useState(null);
+  const [accountId, setAccountId] = useState(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [rows, accounts] = await Promise.all([transactionsApi.list(100), accountsApi.list()]);
+      const [rows, wallets] = await Promise.all([
+        transactionsApi.list({ limit: 100, period, type, accountId }),
+        accountsApi.list(),
+      ]);
       setTransactions(rows);
-      setNames(Object.fromEntries(accounts.map((account) => [account.id, account.name])));
+      setAccounts(wallets);
+      setNames(Object.fromEntries(wallets.map((account) => [account.id, account.name])));
       setError(null);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period, type, accountId]);
 
   useEffect(() => {
     load();
@@ -164,6 +193,19 @@ export function DataView() {
           </Stack>
         }
       />
+
+      <Stack direction="row" sx={{ px: 2, pb: 1.5, gap: 1, overflowX: 'auto' }}>
+        <FilterChip value={period} onChange={setPeriod} options={PERIODS} />
+        <FilterChip
+          value={accountId}
+          onChange={setAccountId}
+          options={[
+            { value: null, label: 'Semua kantong' },
+            ...accounts.map((account) => ({ value: account.id, label: account.name })),
+          ]}
+        />
+        <FilterChip value={type} onChange={setType} options={TYPE_FILTERS} />
+      </Stack>
 
       {loading && <LinearProgress />}
 

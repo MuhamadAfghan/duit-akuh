@@ -25,6 +25,7 @@ import {
   BoardBody,
   BoardNote,
   BoardTitle,
+  FilterChip,
   BoardAction,
   SurfaceEmpty,
 } from '../../common';
@@ -42,23 +43,30 @@ const STATES = {
   exceeded: { pill: 'LEWAT', tone: 'bad', bar: 'bad', bg: '#FDF0F0', fg: '#8E1212' },
 };
 
+const PERIODS = [
+  { value: 'bulan_ini', label: 'Bulan ini' },
+  { value: 'bulan_lalu', label: 'Bulan lalu' },
+  { value: 'tahun_ini', label: 'Tahun ini' },
+];
+
 export function BudgetView() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [period, setPeriod] = useState('bulan_ini');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setReport(await budgetsApi.list('bulan_ini'));
+      setReport(await budgetsApi.list(period));
       setError(null);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     load();
@@ -82,11 +90,14 @@ export function BudgetView() {
         title="Budget"
         backHref={paths.ringkasan}
         action={
-          <BoardAction
-            icon="lega:plus"
-            label="Atur budget"
-            onClick={() => setEditing({ category: '', amount: '' })}
-          />
+          <Stack direction="row" sx={{ gap: 1, alignItems: 'center' }}>
+            <FilterChip value={period} onChange={setPeriod} options={PERIODS} />
+            <BoardAction
+              icon="lega:plus"
+              label="Atur budget"
+              onClick={() => setEditing({ category: '', amount: '' })}
+            />
+          </Stack>
         }
       />
 

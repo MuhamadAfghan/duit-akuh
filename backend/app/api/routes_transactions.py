@@ -13,6 +13,7 @@ guarantee.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
@@ -20,7 +21,8 @@ from sqlalchemy import select
 
 from ..domain.balances import impact_of
 from ..domain.errors import InsufficientBalance
-from ..models import AccountKind, Transaction, TransactionStatus, TransactionType
+from ..domain.periods import PeriodError, resolve_period
+from ..models import AccountKind, Entry, Transaction, TransactionStatus, TransactionType
 from ..services.drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
 from ..services.posting import account_snapshots, post_transaction
 from .deps import CurrentUser, DbSessionDep
@@ -124,12 +126,53 @@ def list_transactions(
     db: DbSessionDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    period: Annotated[str | None, Query()] = None,
+    type: Annotated[TransactionType | None, Query()] = None,  # noqa: A002 - query name
+    account_id: Annotated[uuid.UUID | None, Query()] = None,
 ) -> list[TransactionOut]:
-    """Most recent first, scoped to the caller."""
+    """Most recent first, scoped to the caller.
+
+    The filters exist so a client does not have to pretend: narrowing a
+    page of results in the browser would answer "transfers this month"
+    with "transfers among the last fifty rows", which is a different
+    and quietly wrong answer.
+
+    ``period`` is resolved in the user's own timezone, the same way the
+    reports and the export resolve it, so a boundary at midnight falls
+    in one place for all three.
+    """
+    statement = select(Transaction).where(Transaction.user_id == user.id)
+
+    if period:
+        try:
+            resolved = resolve_period(
+                period, now=datetime.now(timezone.utc), timezone_name=user.timezone
+            )
+        except PeriodError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": "invalid_period", "message": str(exc)}
+            ) from exc
+
+        if resolved.start is not None:
+            statement = statement.where(Transaction.occurred_at >= resolved.start)
+        if resolved.end is not None:
+            statement = statement.where(Transaction.occurred_at < resolved.end)
+
+    if type is not None:
+        statement = statement.where(Transaction.type == type)
+
+    if account_id is not None:
+        # A transaction belongs to an account through its entries, and a
+        # transfer touches two. EXISTS keeps it one row per transaction
+        # rather than one per matching leg.
+        statement = statement.where(
+            select(Entry.id)
+            .where(Entry.transaction_id == Transaction.id, Entry.account_id == account_id)
+            .exists()
+        )
+
     rows = db.scalars(
-        select(Transaction)
-        .where(Transaction.user_id == user.id)
-        .order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc())
+        statement.order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc())
         .limit(limit)
         .offset(offset)
     ).all()

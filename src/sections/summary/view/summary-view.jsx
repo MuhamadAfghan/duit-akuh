@@ -24,6 +24,7 @@ import {
   StatTile,
   HeroCard,
   BoardBody,
+  FilterChip,
   BoardTitle,
   SectionLabel,
   SurfaceEmpty,
@@ -34,6 +35,15 @@ import {
 /** Bar colours, in the order categories come back. */
 const SERIES = ['good', 'info', 'ink', 'warn'];
 
+/** Only the keywords the backend resolves (domain/periods.py). */
+const PERIODS = [
+  { value: 'bulan_ini', label: 'Bulan ini' },
+  { value: 'minggu_ini', label: 'Minggu ini' },
+  { value: 'bulan_lalu', label: 'Bulan lalu' },
+  { value: '30_hari', label: '30 hari' },
+  { value: 'tahun_ini', label: 'Tahun ini' },
+];
+
 export function SummaryView() {
   const [data, setData] = useState(null);
   const [report, setReport] = useState(null);
@@ -41,17 +51,18 @@ export function SummaryView() {
   const [budgets, setBudgets] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [period, setPeriod] = useState('bulan_ini');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [summary, spending, goalRows, budgetReport] = await Promise.all([
         accountsApi.summary(),
-        reportsApi.spending('bulan_ini'),
+        reportsApi.spending(period),
         // Six is a placeholder schedule until goals carry deposit dates;
         // it only affects the per-deposit hint, never a saved figure.
         goalsApi.list(6),
-        budgetsApi.list('bulan_ini'),
+        budgetsApi.list(period),
       ]);
       setData(summary);
       setReport(spending);
@@ -63,7 +74,7 @@ export function SummaryView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     load();
@@ -75,7 +86,10 @@ export function SummaryView() {
 
   return (
     <>
-      <BoardTitle title="Ringkasan" />
+      <BoardTitle
+        title="Ringkasan"
+        action={<FilterChip value={period} onChange={setPeriod} options={PERIODS} />}
+      />
 
       {loading && <LinearProgress />}
 

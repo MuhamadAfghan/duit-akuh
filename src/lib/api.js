@@ -185,7 +185,20 @@ export const reportsApi = {
 };
 
 export const transactionsApi = {
-  list: (limit = 50) => api.get(`/transactions?limit=${limit}`),
+  /**
+   * Filters are applied by the server, never by narrowing a page here:
+   * "transfers this month" computed over the last fifty rows is a
+   * different question with a quietly different answer.
+   */
+  list: ({ limit = 50, period, type, accountId } = {}) => {
+    const query = new URLSearchParams({ limit: String(limit) });
+
+    if (period) query.set('period', period);
+    if (type) query.set('type', type);
+    if (accountId) query.set('account_id', accountId);
+
+    return api.get(`/transactions?${query}`);
+  },
 
   /** Impact only. Writes nothing, so it is safe to call as you type. */
   preview: (draft) => api.post('/transactions/preview', draft),

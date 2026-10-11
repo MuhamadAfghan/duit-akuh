@@ -1,8 +1,12 @@
 'use client';
 
+import { useState } from 'react';
+
 import Box from '@mui/material/Box';
+import Menu from '@mui/material/Menu';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
+import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 
@@ -424,6 +428,69 @@ export function Pill({ children, tone = 'warn' }) {
     >
       {children}
     </Box>
+  );
+}
+
+/**
+ * A filter pill that opens its own options.
+ *
+ * The selected value is the label, so the row of chips reads as the
+ * current question rather than as a set of buttons you have to open to
+ * find out what they are set to.
+ */
+export function FilterChip({ value, options, onChange }) {
+  const [anchor, setAnchor] = useState(null);
+
+  const current = options.find((option) => option.value === value) ?? options[0];
+  const isDefault = current?.value === options[0]?.value;
+
+  return (
+    <>
+      <Box
+        component="button"
+        type="button"
+        onClick={(event) => setAnchor(event.currentTarget)}
+        sx={{
+          px: 1.75,
+          gap: 0.5,
+          height: 36,
+          display: 'flex',
+          flexShrink: 0,
+          fontSize: 13,
+          cursor: 'pointer',
+          alignItems: 'center',
+          borderRadius: 999,
+          border: 'none',
+          fontWeight: isDefault ? 700 : 800,
+          color: isDefault ? 'text.primary' : 'common.white',
+          bgcolor: isDefault ? 'common.white' : 'grey.800',
+        }}
+      >
+        {current?.label}
+        <Iconify icon="eva:arrow-ios-downward-fill" width={15} />
+      </Box>
+
+      <Menu
+        open={Boolean(anchor)}
+        anchorEl={anchor}
+        onClose={() => setAnchor(null)}
+        slotProps={{ paper: { sx: { borderRadius: 2, minWidth: 180 } } }}
+      >
+        {options.map((option) => (
+          <MenuItem
+            key={option.value ?? 'all'}
+            selected={option.value === value}
+            onClick={() => {
+              onChange(option.value);
+              setAnchor(null);
+            }}
+            sx={{ minHeight: 44, fontSize: 14, fontWeight: 700 }}
+          >
+            {option.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 }
 
