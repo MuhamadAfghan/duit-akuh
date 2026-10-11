@@ -22,11 +22,51 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from html import escape
 from pathlib import Path
 
+from ..domain.periods import get_zone
+
 _DIR = Path(__file__).parent
 _PLACEHOLDER = re.compile(r"\{\{(\w+)\}\}")
+
+_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "Mei",
+    "Jun",
+    "Jul",
+    "Agu",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Des",
+)
+
+#: Indonesia spans three zones and people read the abbreviation, not the
+#: offset. Anything else falls back to the IANA name rather than guessing.
+_ZONE_LABELS = {7: "WIB", 8: "WITA", 9: "WIT"}
+
+
+def format_when(moment: datetime, timezone_name: str | None) -> str:
+    """Render a timestamp the way the recipient would write it.
+
+    "11 Okt 2026, 14.32 WIB". A security mail lives or dies on whether
+    the reader can tell at a glance that the time is not theirs, so this
+    is always in the account's own timezone, never UTC.
+    """
+    zone = get_zone(timezone_name)
+    local = moment.astimezone(zone)
+
+    offset = local.utcoffset()
+    hours = int(offset.total_seconds() // 3600) if offset else 0
+    label = _ZONE_LABELS.get(hours, str(zone))
+
+    return f"{local.day} {_MONTHS[local.month - 1]} {local.year}, {local:%H.%M} {label}"
+
 
 #: Subjects live here, not in the template files, so the sender can read
 #: one without parsing the other. Keep them under 45 characters: Gmail on
