@@ -76,11 +76,11 @@ export function SignUpView() {
 
   const renderForm = () => (
     <Box sx={{ gap: 3, display: 'flex', flexDirection: 'column' }}>
-      <Field.Text name="email" label="Email address" slotProps={{ inputLabel: { shrink: true } }} />
+      <Field.Text name="email" label="Email" slotProps={{ inputLabel: { shrink: true } }} />
 
       <Field.Text
         name="password"
-        label="Password"
+        label="Kata sandi"
         placeholder="Minimal 8 karakter"
         type={showPassword.value ? 'text' : 'password'}
         slotProps={{
@@ -104,9 +104,9 @@ export function SignUpView() {
         type="submit"
         variant="contained"
         loading={isSubmitting}
-        loadingIndicator="Create account..."
+        loadingIndicator="Bikin akun…"
       >
-        Create account
+        Bikin akun
       </Button>
     </Box>
   );
@@ -114,12 +114,12 @@ export function SignUpView() {
   return (
     <>
       <FormHead
-        title="Get started absolutely free"
+        title="Bikin akun"
         description={
           <>
-            {`Already have an account? `}
+            {`Udah punya akun? `}
             <Link component={RouterLink} href={paths.auth.signIn} variant="subtitle2">
-              Sign in
+              Masuk
             </Link>
           </>
         }

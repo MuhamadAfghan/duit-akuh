@@ -10,13 +10,14 @@ import { CONFIG } from 'src/global-config';
 import { SplashScreen } from 'src/components/loading-screen';
 
 import { useAuthContext } from '../hooks';
+import { ConnectionError } from '../components/connection-error';
 
 // ----------------------------------------------------------------------
 
 export function GuestGuard({ children }) {
   const router = useRouter();
 
-  const { loading, authenticated } = useAuthContext();
+  const { loading, authenticated, error, checkUserSession } = useAuthContext();
 
   const [isChecking, setIsChecking] = useState(true);
 
@@ -25,6 +26,13 @@ export function GuestGuard({ children }) {
 
   const checkPermissions = async () => {
     if (loading) {
+      return;
+    }
+
+    // The session could not be read, so we do not know whether this
+    // person is signed in. Showing the form would be a lie: submitting
+    // it reaches the same server that just refused to answer.
+    if (error) {
       return;
     }
 
@@ -39,7 +47,11 @@ export function GuestGuard({ children }) {
   useEffect(() => {
     checkPermissions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, loading]);
+  }, [authenticated, loading, error]);
+
+  if (error) {
+    return <ConnectionError error={error} onRetry={checkUserSession} />;
+  }
 
   if (isChecking) {
     return <SplashScreen />;

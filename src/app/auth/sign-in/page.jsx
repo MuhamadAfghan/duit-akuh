@@ -4,7 +4,7 @@ import { SignInView } from 'src/auth/view/session';
 
 // ----------------------------------------------------------------------
 
-export const metadata = { title: `Sign in | Jwt - ${CONFIG.appName}` };
+export const metadata = { title: `Masuk - ${CONFIG.appName}` };
 
 export default function Page() {
   return <SignInView />;

@@ -7,12 +7,22 @@
  * JavaScript to hold, which is the point — an XSS bug cannot read a
  * cookie it cannot see.
  *
- * Every call goes to `/api/*` on this origin and is proxied to FastAPI by
+ * Every call goes to `/srv/*` on this origin and is proxied to FastAPI by
  * the rewrite in next.config.mjs, so requests are same-origin and the
  * `SameSite=Lax` cookie is sent.
+ *
+ * The prefix is `/srv`, not the obvious `/api`, because content blockers
+ * ship rules that match on path. We watched an extension kill
+ * `fetch('/api/auth/me')`, `/api/accounts` and `/api/chat/messages`
+ * before they left the browser — `TypeError: Failed to fetch`, no
+ * request on the wire — while `/api/summary` and `/api/auth/me?x=1` went
+ * through untouched. That is pattern matching on the path, and we cannot
+ * fix someone else's filter list. Moving off `/api` sidesteps the whole
+ * class of rule. Change this and you must change the rewrite in
+ * next.config.mjs and NEVER_CACHE_PREFIXES in public/sw.js with it.
  */
 
-const BASE = '/api';
+const BASE = '/srv';
 
 export class ApiError extends Error {
   constructor(message, { status, code, body } = {}) {

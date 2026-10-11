@@ -31,8 +31,11 @@ export const SignInSchema = z.object({
   email: schemaUtils.email(),
   password: z
     .string()
-    .min(1, { message: 'Password is required!' })
-    .min(6, { message: 'Password must be at least 6 characters!' }),
+    .min(1, { message: 'Kata sandi wajib diisi' })
+    // Matches the backend's MIN_PASSWORD_LENGTH. This used to be 6, so
+    // the form accepted a password the server then rejected, and the
+    // rejection arrived as a generic error after a round trip.
+    .min(8, { message: 'Kata sandi minimal 8 karakter' }),
 });
 
 // ----------------------------------------------------------------------
@@ -73,7 +76,7 @@ export function SignInView() {
 
   const renderForm = () => (
     <Box sx={{ gap: 3, display: 'flex', flexDirection: 'column' }}>
-      <Field.Text name="email" label="Email address" slotProps={{ inputLabel: { shrink: true } }} />
+      <Field.Text name="email" label="Email" slotProps={{ inputLabel: { shrink: true } }} />
 
       <Box sx={{ gap: 1.5, display: 'flex', flexDirection: 'column' }}>
         <Link
@@ -83,12 +86,12 @@ export function SignInView() {
           color="inherit"
           sx={{ alignSelf: 'flex-end' }}
         >
-          Forgot password?
+          Lupa kata sandi?
         </Link>
 
         <Field.Text
           name="password"
-          label="Password"
+          label="Kata sandi"
           placeholder="Minimal 8 karakter"
           type={showPassword.value ? 'text' : 'password'}
           slotProps={{
@@ -115,9 +118,9 @@ export function SignInView() {
         type="submit"
         variant="contained"
         loading={isSubmitting}
-        loadingIndicator="Sign in..."
+        loadingIndicator="Masuk…"
       >
-        Sign in
+        Masuk
       </Button>
     </Box>
   );
@@ -125,12 +128,12 @@ export function SignInView() {
   return (
     <>
       <FormHead
-        title="Sign in to your account"
+        title="Masuk"
         description={
           <>
-            {`Don’t have an account? `}
+            {`Belum punya akun? `}
             <Link component={RouterLink} href={paths.auth.signUp} variant="subtitle2">
-              Get started
+              Daftar
             </Link>
           </>
         }

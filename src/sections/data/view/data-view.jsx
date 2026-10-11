@@ -176,7 +176,7 @@ export function DataView() {
                    download and the Content-Disposition filename, and the
                    session cookie rides along because it is same-origin. */
                 component="a"
-                href="/api/export/transactions.csv?period=semua"
+                href="/srv/export/transactions.csv?period=semua"
                 startIcon={<Iconify icon="solar:download-bold" width={18} />}
                 sx={{ minHeight: 44 }}
               >
