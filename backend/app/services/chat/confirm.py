@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session as DbSession
 from ...api.schemas import Draft as DraftSchema
 from ...domain.errors import AllocationExceedsBalance
 from ...domain.ledger import Leg, build_reversal
+from ...domain.periods import get_zone
 from ...models import (
     AccountType,
     Draft,
@@ -29,6 +30,7 @@ from ...models import (
     Transaction,
     TransactionStatus,
     TransactionType,
+    User,
 )
 from ..accounts import open_account_with_balance
 from ..budgets import set_budget
@@ -68,11 +70,16 @@ def _confirm_transaction(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dic
     parsed = TypeAdapter(DraftSchema).validate_python(draft.payload)
     legs = build_legs(db, user_id, parsed)
 
+    # A stored payload can hold an offset-less date if whatever drafted
+    # it wrote one; reading it as the owner's wall clock beats letting
+    # the column type refuse it at confirmation time.
+    zone = get_zone(getattr(db.get(User, user_id), "timezone", None))
+
     result = post_transaction(
         db,
         user_id=user_id,
         tx_type=TRANSACTION_TYPES[parsed.type],
-        occurred_at=occurred_at_of(parsed),
+        occurred_at=occurred_at_of(parsed, zone),
         legs=legs,
         idempotency_key=draft.operation_id,
         merchant=parsed.merchant,

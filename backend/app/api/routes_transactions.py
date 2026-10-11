@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from ..domain.balances import impact_of
 from ..domain.errors import InsufficientBalance
-from ..domain.periods import PeriodError, resolve_period
+from ..domain.periods import PeriodError, get_zone, resolve_period
 from ..models import AccountKind, Entry, Transaction, TransactionStatus, TransactionType
 from ..services.drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
 from ..services.posting import account_snapshots, post_transaction
@@ -107,7 +107,7 @@ def create_transaction(
         db,
         user_id=user.id,
         tx_type=TRANSACTION_TYPES[body.type],
-        occurred_at=occurred_at_of(body),
+        occurred_at=occurred_at_of(body, get_zone(user.timezone)),
         legs=legs,
         idempotency_key=idempotency_key,
         merchant=body.merchant,
