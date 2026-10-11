@@ -10,6 +10,9 @@ import Divider from '@mui/material/Divider';
 import Typography from '@mui/material/Typography';
 import LinearProgress from '@mui/material/LinearProgress';
 
+import { paths } from 'src/routes/paths';
+import { RouterLink } from 'src/routes/components';
+
 import { formatRupiah } from 'src/utils/format-money';
 
 import { goalsApi, budgetsApi, reportsApi, accountsApi } from 'src/lib/api';
@@ -237,6 +240,8 @@ export function SummaryView() {
             )}
           </Card>
         )}
+
+        <MenuGrid budgets={budgets} goals={goals} />
       </Stack>
     );
   };
@@ -246,5 +251,99 @@ export function SummaryView() {
       <SurfaceHeader title="Ringkasan" />
       <Box sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>{renderBody()}</Box>
     </Box>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+/**
+ * The way into the three surfaces that are not tabs.
+ *
+ * Each tile carries its own current state rather than just a name, so
+ * the grid answers "is anything wrong?" without being opened.
+ */
+function MenuGrid({ budgets, goals }) {
+  const exceeded = budgets?.exceeded?.length ?? 0;
+  const behind = goals.filter((goal) => goal.status === 'needs_adjustment').length;
+
+  const tiles = [
+    {
+      href: paths.budget,
+      icon: 'solar:chart-square-outline',
+      label: 'Budget',
+      hint: exceeded ? `${exceeded} kategori lewat limit` : 'Semua masih aman',
+      alert: exceeded > 0,
+    },
+    {
+      href: paths.target,
+      icon: 'lega:target',
+      label: 'Target',
+      hint: goals.length
+        ? `${goals.length} target${behind ? `, ${behind} ketinggalan` : ''}`
+        : 'Belum ada target',
+      alert: behind > 0,
+    },
+    {
+      href: paths.simulasi,
+      icon: 'lega:calculator',
+      label: 'Simulasi',
+      hint: 'Nabung & deposito',
+    },
+    {
+      href: '/srv/export/transactions.csv?period=semua',
+      icon: 'solar:download-bold',
+      label: 'Ekspor CSV',
+      hint: 'Satu baris per sisi',
+      external: true,
+    },
+  ];
+
+  return (
+    <Stack sx={{ gap: 1.5 }}>
+      <Typography variant="overline" sx={{ color: 'text.secondary' }}>
+        Menu
+      </Typography>
+
+      <Box sx={{ gap: 1.5, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }}>
+        {tiles.map((tile) => (
+          <Card
+            key={tile.label}
+            component={tile.external ? 'a' : RouterLink}
+            href={tile.href}
+            sx={{
+              p: 2,
+              gap: 1,
+              display: 'flex',
+              minHeight: 44,
+              textDecoration: 'none',
+              flexDirection: 'column',
+              color: 'text.primary',
+            }}
+          >
+            <Box
+              sx={{
+                width: 40,
+                height: 40,
+                display: 'grid',
+                placeItems: 'center',
+                borderRadius: '50%',
+                color: tile.alert ? 'error.dark' : 'primary.darker',
+                bgcolor: tile.alert ? 'error.lighter' : 'primary.lighter',
+              }}
+            >
+              <Iconify icon={tile.icon} width={20} />
+            </Box>
+
+            <Typography variant="subtitle2">{tile.label}</Typography>
+            <Typography
+              variant="caption"
+              sx={{ color: tile.alert ? 'error.main' : 'text.secondary' }}
+            >
+              {tile.hint}
+            </Typography>
+          </Card>
+        ))}
+      </Box>
+    </Stack>
   );
 }

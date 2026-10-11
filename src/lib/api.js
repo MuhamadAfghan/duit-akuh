@@ -117,7 +117,9 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
 export const api = {
   get: (path, options) => request(path, { ...options, method: 'GET' }),
   post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
+  put: (path, body, options) => request(path, { ...options, method: 'PUT', body }),
   patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
+  del: (path, options) => request(path, { ...options, method: 'DELETE' }),
 };
 
 // ----------------------------------------------------------------------
@@ -150,10 +152,31 @@ export const accountsApi = {
 export const goalsApi = {
   /** `remainingDeposits` drives the per-deposit figure; 0 means unscheduled. */
   list: (remainingDeposits = 0) => api.get(`/goals?remaining_deposits=${remainingDeposits}`),
+
+  /**
+   * The FR11 options for reaching a goal on a given monthly capacity:
+   * more deposits, more up front, or more per period.
+   */
+  plan: (id, capacity) => api.get(`/goals/${id}/plan?capacity=${capacity}`),
 };
 
 export const budgetsApi = {
   list: (period = 'bulan_ini') => api.get(`/budgets?period=${period}`),
+
+  /** Creates or replaces one category's monthly limit. */
+  set: (category, amount) => api.put('/budgets', { category, amount }),
+
+  remove: (category) => api.del(`/budgets?category=${encodeURIComponent(category)}`),
+};
+
+/**
+ * Simulations change nothing until a plan is applied (AC07), so none of
+ * these need a confirmation card.
+ */
+export const simulationsApi = {
+  saving: (payload) => api.post('/simulations/saving', payload),
+  deposit: (payload) => api.post('/simulations/deposit', payload),
+  capacity: () => api.get('/simulations/capacity'),
 };
 
 export const reportsApi = {
@@ -163,7 +186,18 @@ export const reportsApi = {
 
 export const transactionsApi = {
   list: (limit = 50) => api.get(`/transactions?limit=${limit}`),
+
+  /** Impact only. Writes nothing, so it is safe to call as you type. */
   preview: (draft) => api.post('/transactions/preview', draft),
+
+  /**
+   * The header is mandatory, not best-effort: AC04 requires a
+   * confirmation sent twice to produce exactly one transaction, and the
+   * backend answers 422 without it rather than silently dropping the
+   * guarantee.
+   */
+  create: (draft, operationId) =>
+    api.post('/transactions', draft, { headers: { 'Idempotency-Key': operationId } }),
 };
 
 /**

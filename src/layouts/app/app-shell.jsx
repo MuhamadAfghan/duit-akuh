@@ -42,6 +42,9 @@ export function AppShell({ children }) {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
+          // The canvas every surface sits on. White belongs to cards, not
+          // to the page: it is what makes a rounded card read as raised.
+          bgcolor: theme.vars.palette.grey[100],
           // Compress by the keyboard's height so the composer stays visible.
           paddingBottom: keyboardInset ? `${keyboardInset}px` : 0,
           [theme.breakpoints.up('sm')]: {

@@ -3,12 +3,21 @@ import { paths } from 'src/routes/paths';
 // ----------------------------------------------------------------------
 
 /**
- * The three bottom tabs required by PRD FR17: Chat, Ringkasan, Data.
+ * The bottom tabs.
  *
- * Chat is first and is the root path because it is the primary surface
- * (FR14); the other two are companion views over the same data.
+ * PRD FR17 names three — Chat, Ringkasan, Data — and Kantong is a
+ * fourth we added: it is the thing people open most, and reaching it
+ * through Ringkasan put the app's most-used list two taps away for no
+ * reason. Chat stays first and is the root path because it is the
+ * primary surface (FR14); the rest are companion views over the same
+ * data, and every one of them can also be driven from the chat.
  *
- * Icons are picked from the set registered in
+ * Budget, Target and Simulasi deliberately stay off the bar. Five tabs
+ * is where a bottom bar stops being scannable, and those three are
+ * things you visit, not things you live in. They are one tap from
+ * Ringkasan.
+ *
+ * Icons come from the set registered in
  * src/components/iconify/icon-sets.js so they render offline and do not
  * flicker — a plain Iconify name would be fetched from the network.
  */
@@ -16,16 +25,21 @@ export const appTabs = [
   {
     label: 'Chat',
     path: paths.chat,
-    icon: 'solar:chat-round-dots-bold',
+    icon: 'lega:chat',
   },
   {
     label: 'Ringkasan',
     path: paths.ringkasan,
-    icon: 'solar:wad-of-money-bold',
+    icon: 'lega:chart',
+  },
+  {
+    label: 'Kantong',
+    path: paths.kantong,
+    icon: 'lega:wallet',
   },
   {
     label: 'Data',
     path: paths.data,
-    icon: 'solar:bill-list-bold',
+    icon: 'lega:list',
   },
 ];

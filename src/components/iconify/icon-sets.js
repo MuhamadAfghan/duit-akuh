@@ -699,4 +699,58 @@ export default {
   'custom:calendar-agenda-outline': {
     body: '<path fill="currentColor" d="M21 19C21.0002 19.5046 20.8096 19.9906 20.4665 20.3605C20.1234 20.7305 19.6532 20.9572 19.15 20.995L19 21H5C4.49542 21.0002 4.00943 20.8096 3.63945 20.4665C3.26947 20.1234 3.04284 19.6532 3.005 19.15L3 19L3 5C2.99984 4.49542 3.19041 4.00943 3.5335 3.63945C3.87659 3.26947 4.34685 3.04284 4.85 3.005L5 3L19 3C19.5046 2.99984 19.9906 3.19041 20.3605 3.5335C20.7305 3.87659 20.9572 4.34685 20.995 4.85L21 5V19ZM19 19V5L5 5L5 19H19ZM17 8C17 8.24493 16.91 8.48134 16.7473 8.66437C16.5845 8.84741 16.3603 8.96434 16.117 8.993L16 9L8 9C7.74512 8.99972 7.49997 8.90212 7.31463 8.72715C7.1293 8.55218 7.01777 8.31305 7.00283 8.05861C6.98789 7.80416 7.07067 7.55362 7.23426 7.35817C7.39786 7.16271 7.6299 7.0371 7.883 7.007L8 7L16 7C16.2652 7 16.5196 7.10536 16.7071 7.29289C16.8946 7.48043 17 7.73478 17 8ZM17 12C17 12.2652 16.8946 12.5196 16.7071 12.7071C16.5196 12.8946 16.2652 13 16 13H8C7.73478 13 7.48043 12.8946 7.29289 12.7071C7.10536 12.5196 7 12.2652 7 12C7 11.7348 7.10536 11.4804 7.29289 11.2929C7.48043 11.1054 7.73478 11 8 11H16C16.2652 11 16.5196 11.1054 16.7071 11.2929C16.8946 11.4804 17 11.7348 17 12ZM17 16C17 16.2449 16.91 16.4813 16.7473 16.6644C16.5845 16.8474 16.3603 16.9643 16.117 16.993L16 17H8C7.74512 16.9997 7.49997 16.9021 7.31463 16.7272C7.1293 16.5522 7.01777 16.313 7.00283 16.0586C6.98789 15.8042 7.07067 15.5536 7.23426 15.3582C7.39785 15.1627 7.6299 15.0371 7.883 15.007L8 15H16C16.2652 15 16.5196 15.1054 16.7071 15.2929C16.8946 15.4804 17 15.7348 17 16Z" />',
   },
+  /**
+   * lega's own glyphs. Drawn rather than imported: the registered sets
+   * had no wallet, card, target or calculator, and an unregistered name
+   * is fetched from the network at render time, which flickers and
+   * breaks the offline shell.
+   */
+  'lega:wallet': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3 8.5A2.5 2.5 0 0 1 5.5 6h13A2.5 2.5 0 0 1 21 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 12.5h2"/>',
+  },
+  'lega:card': {
+    body: '<rect x="3" y="6" width="18" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M3 10.5h18M6.5 14.5h3"/>',
+  },
+  'lega:target': {
+    body: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="3.8" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+  },
+  'lega:calculator': {
+    body: '<rect x="5" y="3" width="14" height="18" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 7.5h6M9 12h2M13 12h2M9 16h2M13 16h2"/>',
+  },
+  'lega:chat': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" d="M20 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 14-5z"/>',
+  },
+  'lega:chart': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" d="M5 19V11M12 19V5M19 19v-5"/>',
+  },
+  'lega:list': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" d="M5 6h14M5 12h14M5 18h9"/>',
+  },
+  'lega:plus': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" d="M12 5v14M5 12h14"/>',
+  },
+  'lega:arrow-up': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 19V5M5 12l7-7 7 7"/>',
+  },
+  'lega:arrow-down': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M19 12l-7 7-7-7"/>',
+  },
+  'lega:swap': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M4 9h13l-3-3M20 15H7l3 3"/>',
+  },
+  'lega:clock': {
+    body: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 7.5V12l3 2"/>',
+  },
+  'lega:arrow-right': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12h12M12 6l6 6-6 6"/>',
+  },
+  'lega:back': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M19 12H6M11 6l-6 6 6 6"/>',
+  },
+  'lega:download': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11M8 11l4 4 4-4M5 19h14"/>',
+  },
+  'lega:search': {
+    body: '<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.1"/><path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" d="M20 20l-3.5-3.5"/>',
+  },
 };
