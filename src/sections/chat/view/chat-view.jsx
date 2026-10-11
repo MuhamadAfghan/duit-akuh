@@ -84,6 +84,7 @@ export function ChatView() {
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
   const [accountNames, setAccountNames] = useState({});
+  const [freeToSpend, setFreeToSpend] = useState(null);
 
   // Guards against a double tap firing two confirmations before the
   // first response lands. The backend is idempotent regardless; this
@@ -115,6 +116,29 @@ export function ChatView() {
       .list()
       .then((rows) => setAccountNames(Object.fromEntries(rows.map((a) => [a.id, a.name]))))
       .catch(() => {});
+  }, [messages]);
+
+  // The one number the whole app exists to produce, kept in view while
+  // you type. Re-read after every turn because a confirmed draft moves
+  // it. A failure just hides the chip: it is context, not content.
+  useEffect(() => {
+    accountsApi
+      .summary()
+      .then((data) => {
+        const value = data?.free_to_spend;
+        // formatRupiah throws on a non-integer by design, which is
+        // right for a card but wrong for a header chip: it would take
+        // the whole thread down over a decoration.
+        if (Number.isInteger(value)) {
+          setFreeToSpend(value);
+          return;
+        }
+        if (value != null) {
+          console.error('free_to_spend bukan bilangan bulat:', value);
+        }
+        setFreeToSpend(null);
+      })
+      .catch(() => setFreeToSpend(null));
   }, [messages]);
 
   const handleSend = useCallback(
@@ -244,7 +268,7 @@ export function ChatView() {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
-      <ChatHeader status={status} />
+      <ChatHeader status={status} freeToSpend={freeToSpend} />
       <ChatThread messages={messages} renderCard={renderCard} />
       <ChatComposer onSend={handleSend} disabled={sending} />
     </Box>

@@ -179,7 +179,7 @@ export function DraftCard({ card, names = {}, onConfirm, onCancel }) {
       }))}
       status={CARD_STATUS[card.status] ?? 'draft'}
       statusMessage={SETTLED_MESSAGES[card.status]}
-      confirmLabel="Simpan"
+      confirmLabel="Geser untuk simpan"
       onConfirm={onConfirm}
       onCancel={onCancel}
     >

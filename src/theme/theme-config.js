@@ -18,8 +18,14 @@ export const themeConfig = {
   /** **************************************
    * Typography
    *************************************** */
+  /**
+   * Plus Jakarta Sans stands in for Maison Neue, the typeface Gojek's
+   * Asphalt uses and which is licensed. It is a geometric grotesque
+   * from Tokotype, drawn for Jakarta's city identity, and it is the
+   * closest free match in both proportion and temperament.
+   */
   fontFamily: {
-    primary: 'Public Sans Variable',
+    primary: 'Plus Jakarta Sans Variable',
     secondary: 'Barlow',
   },
   /** **************************************

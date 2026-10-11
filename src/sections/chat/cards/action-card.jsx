@@ -6,11 +6,11 @@ import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
 import Divider from '@mui/material/Divider';
 import Typography from '@mui/material/Typography';
-import CircularProgress from '@mui/material/CircularProgress';
 
 import { formatRupiah } from 'src/utils/format-money';
 
 import { Iconify } from 'src/components/iconify';
+import { SwipeConfirm } from 'src/components/swipe-confirm';
 
 // ----------------------------------------------------------------------
 
@@ -42,7 +42,7 @@ export function ActionCard({
   impact = [],
   status = 'draft',
   statusMessage,
-  confirmLabel = 'Konfirmasi',
+  confirmLabel = 'Geser untuk konfirmasi',
   onConfirm,
   onEdit,
   onCancel,
@@ -152,50 +152,45 @@ export function ActionCard({
       )}
 
       {(isPending || isSaving) && (
-        <Stack direction="row" sx={{ mt: 2.5, gap: 1 }}>
-          <Button
-            fullWidth
-            variant="contained"
-            size="large"
+        <Stack sx={{ mt: 2.5, gap: 1 }}>
+          <SwipeConfirm
+            label={confirmLabel}
+            busy={isSaving}
             disabled={isSaving}
-            onClick={onConfirm}
-            startIcon={
-              isSaving ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : (
-                <Iconify icon="solar:check-circle-bold" />
-              )
-            }
-          >
-            {isSaving ? 'Menyimpan' : confirmLabel}
-          </Button>
+            onConfirm={onConfirm}
+          />
 
-          {onEdit && (
-            <Button
-              variant="outlined"
-              size="large"
-              color="inherit"
-              disabled={isSaving}
-              onClick={onEdit}
-              aria-label="Ubah draft"
-              sx={{ minWidth: 44, px: 1.5 }}
-            >
-              <Iconify icon="solar:pen-bold" />
-            </Button>
-          )}
+          {(onEdit || onCancel) && (
+            <Stack direction="row" sx={{ gap: 1 }}>
+              {onEdit && (
+                <Button
+                  fullWidth
+                  variant="text"
+                  size="large"
+                  color="inherit"
+                  disabled={isSaving}
+                  onClick={onEdit}
+                  startIcon={<Iconify icon="solar:pen-bold" width={18} />}
+                  sx={{ minHeight: 44 }}
+                >
+                  Ubah
+                </Button>
+              )}
 
-          {onCancel && (
-            <Button
-              variant="outlined"
-              size="large"
-              color="inherit"
-              disabled={isSaving}
-              onClick={onCancel}
-              aria-label="Batalkan draft"
-              sx={{ minWidth: 44, px: 1.5 }}
-            >
-              <Iconify icon="mingcute:close-line" />
-            </Button>
+              {onCancel && (
+                <Button
+                  fullWidth
+                  variant="text"
+                  size="large"
+                  color="inherit"
+                  disabled={isSaving}
+                  onClick={onCancel}
+                  sx={{ minHeight: 44, color: 'text.secondary' }}
+                >
+                  Batal
+                </Button>
+              )}
+            </Stack>
           )}
         </Stack>
       )}
