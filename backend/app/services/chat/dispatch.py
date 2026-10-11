@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import asdict
 from datetime import date, datetime, time, timezone
+from functools import partial
 from typing import Any
 
 from sqlalchemy import func, select
@@ -28,8 +29,9 @@ from ...domain.balances import (
     net_worth,
     total_debt,
 )
+from ...domain.batch import reconcile
 from ...domain.errors import AmbiguousAccount, DomainError
-from ...domain.periods import PeriodError, resolve_period
+from ...domain.periods import Period, PeriodError, resolve_period
 from ...domain.simulation import SimulationError, simulate_deposit, simulate_regular_saving
 from ...models import (
     LIQUID_TYPES,
@@ -179,11 +181,41 @@ def tool_get_spending(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
 
     report = period_report(db, user_id, period)
 
+    # The same window again, immediately before this one. A breakdown
+    # with no comparison answers "what did I spend" but not the question
+    # people actually ask, which is "is that a lot".
+    span = period.end - period.start
+    previous = period_report(
+        db, user_id, Period(start=period.start - span, end=period.start, label="sebelumnya")
+    )
+
+    limits = {
+        status.category.casefold(): status.limit
+        for status in budget_report(db, user_id, period).statuses
+    }
+
+    categories = []
+
+    for row in report.categories:
+        limit = limits.get(row.name.casefold())
+
+        categories.append(
+            {
+                "name": row.name,
+                "amount": row.amount,
+                # Only when a budget exists. A category with none is not
+                # "within budget" - there is nothing to be within.
+                "limit": limit,
+                "over": (row.amount - limit) if limit is not None and row.amount > limit else None,
+            }
+        )
+
     return {
         "period": report.label,
         "expense_total": report.expense_total,
         "income_total": report.income_total,
-        "categories": [{"name": c.name, "amount": c.amount} for c in report.categories],
+        "previous_expense_total": previous.expense_total,
+        "categories": categories,
         "transaction_count": report.transaction_count,
     }
 
@@ -416,6 +448,54 @@ def _resolve(db: DbSession, user_id: uuid.UUID, text: str) -> Account:
         raise ToolError(str(exc)) from exc
 
 
+def _resolve_optional(
+    db: DbSession, user_id: uuid.UUID, text: str | None
+) -> tuple[str | None, bool]:
+    """An account id, or a blank the user will fill in.
+
+    The single-entry path turns an ambiguous or missing wallet into a
+    tool error so the model asks. A batch cannot do that: one unclear
+    wallet out of three would throw away two entries the model got
+    right, and the person would be answering a question about a list
+    they cannot see.
+
+    So the slot is left empty and carried to the card, where the wallets
+    are on screen and one tap resolves it. The guess is still never
+    made - it is just made by the person instead of the model (AC04),
+    and `_confirm_batch` refuses to post while any slot is empty.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None, True
+
+    try:
+        return str(resolve_account(db, user_id, text).id), False
+    except (AmbiguousAccount, DomainError):
+        return None, True
+
+
+def _fill_slot(
+    db: DbSession,
+    user_id: uuid.UUID,
+    *,
+    item: dict,
+    payload: dict,
+    unresolved: list[str],
+    batched: bool,
+    field: str,
+    source_key: str,
+) -> None:
+    """Fill one account slot, strictly or leniently depending on mode."""
+    if not batched:
+        payload[field] = str(_resolve(db, user_id, _require_str(item, source_key)).id)
+        return
+
+    account_id, missing = _resolve_optional(db, user_id, item.get(source_key))
+    payload[field] = account_id
+
+    if missing:
+        unresolved.append(field)
+
+
 def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
     items = args.get("transactions")
 
@@ -425,7 +505,20 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
     if len(items) > 10:
         raise ToolError("Maksimal 10 transaksi dalam satu pesan")
 
+    #: What the person said the whole lot came to, when they said it.
+    #: Never posted - `reconcile` only checks the parts against it.
+    stated_total = args.get("stated_total")
+
+    if stated_total is not None:
+        try:
+            stated_total = positive_rupiah(stated_total)
+        except MoneyError as exc:
+            raise ToolError(str(exc)) from exc
+
+    batched = len(items) > 1 or stated_total is not None
+
     drafts = []
+    payloads = []
 
     for item in items:
         if not isinstance(item, dict):
@@ -452,25 +545,35 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
             if isinstance(item.get(optional), str) and item[optional].strip():
                 payload[optional] = item[optional].strip()
 
-        if kind in {"expense", "transfer", "card_payment"}:
-            source = _resolve(db, user_id, _require_str(item, "from_account"))
-            payload["from_account_id"] = str(source.id)
+        unresolved: list[str] = []
+        fill = partial(
+            _fill_slot,
+            db,
+            user_id,
+            item=item,
+            payload=payload,
+            unresolved=unresolved,
+            batched=batched,
+        )
 
-        if kind in {"income", "refund"}:
-            target = _resolve(db, user_id, _require_str(item, "to_account"))
-            payload["to_account_id"] = str(target.id)
+        if kind in {"expense", "transfer", "card_payment"}:
+            fill(field="from_account_id", source_key="from_account")
+
+        if kind in {"income", "refund", "transfer"}:
+            fill(field="to_account_id", source_key="to_account")
 
         if kind == "transfer":
-            target = _resolve(db, user_id, _require_str(item, "to_account"))
-            payload["to_account_id"] = str(target.id)
             payload["fee"] = fee
 
         if kind == "card_payment":
-            card = _resolve(db, user_id, _require_str(item, "to_account"))
-            payload["card_account_id"] = str(card.id)
+            fill(field="card_account_id", source_key="to_account")
 
         if kind == "refund" and "category" not in payload:
             raise ToolError("Refund memerlukan kategori transaksi aslinya")
+
+        if batched:
+            payloads.append({"payload": payload, "unresolved": unresolved})
+            continue
 
         impact = _impact_for(db, user_id, payload)
         draft = _store_draft(db, user_id=user_id, kind=kind, payload=payload, impact=impact)
@@ -479,17 +582,77 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
             {"draft_id": str(draft.id), "operation_id": draft.operation_id, "impact": impact}
         )
 
+    if batched:
+        draft = _store_batch(db, user_id, payloads, stated_total)
+
+        drafts.append(
+            {
+                "draft_id": str(draft.id),
+                "operation_id": draft.operation_id,
+                "impact": (draft.impact or {}).get("rows"),
+            }
+        )
+
     return {"drafts": drafts, "saved": False, "note": "Menunggu konfirmasi pengguna"}
 
 
-def _impact_for(db: DbSession, user_id: uuid.UUID, payload: dict) -> list[dict]:
-    """Compute a payload's impact the same way the REST preview does."""
+def _store_batch(
+    db: DbSession, user_id: uuid.UUID, items: list[dict], stated_total: int | None
+) -> Draft:
+    """One draft holding several entries.
+
+    One draft and not several, because this is one thing the person
+    said and must be one thing they confirm. Several drafts would mean
+    several swipes for one sentence, and - worse - a half-posted batch
+    the moment one of them failed.
+
+    The impact is folded over every resolved entry at once rather than
+    computed per item and added up: two expenses from the same wallet
+    have to show one before and one after, not two overlapping previews
+    of the same balance.
+    """
+    reconciliation = reconcile([item["payload"]["amount"] for item in items], stated_total)
+
+    legs: list[Any] = []
+
+    for item in items:
+        if item["unresolved"]:
+            continue
+
+        legs.extend(_legs_for(db, user_id, item["payload"]))
+
+    snapshots = account_snapshots(db, user_id)
+
+    impact = [
+        {"account": row.name, "before": row.before, "after": row.after, "delta": row.delta}
+        for row in impact_of(legs, snapshots)
+    ]
+
+    payload = {
+        "items": [{**item["payload"], "unresolved": item["unresolved"]} for item in items],
+        "items_total": reconciliation.items_total,
+        "stated_total": reconciliation.stated_total,
+        "difference": reconciliation.difference,
+        "matches": reconciliation.matches,
+    }
+
+    return _store_draft(db, user_id=user_id, kind="batch", payload=payload, impact=impact)
+
+
+def _legs_for(db: DbSession, user_id: uuid.UUID, payload: dict):
+    """Validate a stored payload and turn it into ledger legs."""
     from pydantic import TypeAdapter
 
     from ...api.schemas import Draft as DraftSchema
 
     parsed = TypeAdapter(DraftSchema).validate_python(payload)
-    legs = build_legs(db, user_id, parsed)
+
+    return build_legs(db, user_id, parsed)
+
+
+def _impact_for(db: DbSession, user_id: uuid.UUID, payload: dict) -> list[dict]:
+    """Compute a payload's impact the same way the REST preview does."""
+    legs = _legs_for(db, user_id, payload)
     snapshots = account_snapshots(db, user_id)
 
     return [

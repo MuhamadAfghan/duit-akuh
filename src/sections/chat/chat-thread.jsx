@@ -1,15 +1,18 @@
 'use client';
 
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useMemo, Fragment, useState, useEffect, useCallback } from 'react';
 
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
 
+import { chatDayKey } from 'src/utils/format-chat-time';
+
 import { Iconify } from 'src/components/iconify';
 import { Scrollbar } from 'src/components/scrollbar';
 
-import { ChatMessage } from './chat-message';
+import { SpendingCard } from './cards/spending-card';
+import { ChatMessage, DaySeparator } from './chat-message';
 
 // ----------------------------------------------------------------------
 
@@ -27,11 +30,36 @@ const STICK_THRESHOLD = 80;
  * When a turn arrives while the user is scrolled up, a jump button appears
  * instead — a confirmation card must never land silently off-screen.
  */
-export function ChatThread({ messages, renderCard, footer = null }) {
+export function ChatThread({ messages, renderCard, onReply, footer = null }) {
   const scrollRef = useRef(null);
   const isStuckRef = useRef(true);
 
   const [showJump, setShowJump] = useState(false);
+
+  /**
+   * Which messages open a new day.
+   *
+   * Only the boundaries are worked out here; DaySeparator writes its own
+   * label, because "HARI INI" expires at midnight and this memo does
+   * not. Messages with no timestamp — the welcome text, a local error —
+   * never open a day, so a thread that has only those shows no band at
+   * all rather than one dated today.
+   */
+  const dayBreaks = useMemo(() => {
+    const breaks = new Set();
+    let previous = null;
+
+    messages.forEach((message) => {
+      const key = chatDayKey(message.at);
+
+      if (key && key !== previous) {
+        breaks.add(message.id);
+        previous = key;
+      }
+    });
+
+    return breaks;
+  }, [messages]);
 
   const scrollToBottom = useCallback((behavior = 'smooth') => {
     const node = scrollRef.current;
@@ -80,20 +108,40 @@ export function ChatThread({ messages, renderCard, footer = null }) {
     <Box sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex' }}>
       <Scrollbar ref={scrollRef} onScroll={handleScroll} sx={{ px: 2, py: 2 }}>
         <Stack spacing={1.5} sx={{ justifyContent: 'flex-end', flex: '1 1 auto' }}>
-          {messages.map((message) =>
-            message.card ? (
-              <Box key={message.id} sx={{ display: 'flex', py: 0.5 }}>
-                {renderCard(message)}
-              </Box>
-            ) : (
-              <ChatMessage
-                key={message.id}
-                role={message.role}
-                body={message.body}
-                time={message.time}
-              />
-            )
-          )}
+          {messages.map((message) => (
+            <Fragment key={message.id}>
+              {dayBreaks.has(message.id) && <DaySeparator at={message.at} />}
+
+              {message.card ? (
+                <Box sx={{ display: 'flex', py: 0.5 }}>{renderCard(message)}</Box>
+              ) : (
+                <>
+                  <ChatMessage
+                    role={message.role}
+                    body={message.body}
+                    at={message.at}
+                    replyTo={message.replyTo}
+                    // The welcome text, the first-run greeting and a
+                    // message still in flight have no id the server
+                    // would accept, so they get no actions at all — a
+                    // "Balas" that 404s is worse than one not offered.
+                    onReply={
+                      onReply && message.saved && message.body ? () => onReply(message) : undefined
+                    }
+                  />
+
+                  {/* Indented to the text column, so a breakdown reads
+                      as part of what was just said rather than as a
+                      second turn. 34px is the mark plus its gap. */}
+                  {message.view?.kind === 'spending' && (
+                    <Box sx={{ pl: '34px', pt: 0.75 }}>
+                      <SpendingCard data={message.view.data} />
+                    </Box>
+                  )}
+                </>
+              )}
+            </Fragment>
+          ))}
 
           {footer}
         </Stack>

@@ -257,6 +257,13 @@ class Transaction(Base, OwnedMixin, TimestampMixin):
     #: which is when we recorded it. The PRD requires both.
     occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
+    #: Set when several entries were confirmed together, from one
+    #: sentence and one swipe. Not a foreign key to anything: the group
+    #: has no row of its own because it owns nothing - it is a fact
+    #: about how these transactions were entered, which is what lets
+    #: them be shown, and reversed, as the one thing the person did.
+    group_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     merchant: Mapped[str | None] = mapped_column(String(200), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -501,17 +508,36 @@ class DraftStatus(str, enum.Enum):
 
 
 class Conversation(Base, OwnedMixin, TimestampMixin):
-    """The single persistent thread (PRD FR14, FR15).
+    """One named thread (PRD FR14, FR15).
 
-    One per user, enforced by a unique constraint rather than convention:
-    the PRD is explicit that there is one main chat continuing across
-    sessions and devices, with no per-topic threads to switch between.
+    This used to be one row per user, held to it by a unique constraint,
+    because the PRD describes a single chat continuing across sessions
+    and devices. The constraint is gone; what it was protecting is not.
+
+    FR14 asks that the chat can start *and finish* every feature, and
+    FR15 that the conversation survives a new device. Neither says there
+    may only be one of them, and in use one thread meant a month of
+    receipts sat between a simulation and its answer. What does still
+    hold is that a user always has a current thread and never has to
+    choose one to begin: the server picks the most recent, and creates
+    one when there is none.
     """
 
     __tablename__ = "conversations"
-    __table_args__ = (UniqueConstraint("user_id", name="uq_conversation_per_user"),)
+    __table_args__ = (Index("ix_conversations_user_archived", "user_id", "is_archived"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
+
+    #: What the person calls it. Null until the first message, which the
+    #: orchestrator uses to name it - a thread called "Obrolan baru"
+    #: forever is a list you cannot read.
+    title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    #: Booleans rather than timestamps, matching `Account.is_archived`.
+    #: Neither needs to say *when*, and a nullable datetime used as a
+    #: flag is a shape the rest of this schema does not have.
+    is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Message(Base, OwnedMixin):
@@ -544,6 +570,31 @@ class Message(Base, OwnedMixin):
     #: lives on the Draft row so it cannot drift from what gets posted.
     draft_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("drafts.id", ondelete="SET NULL"), nullable=True
+    )
+
+    #: A read tool's own result, kept so the turn can be *drawn* and
+    #: not only narrated.
+    #:
+    #: Prose is a bad way to deliver a breakdown — "makan 512rb,
+    #: transport 268rb, kopi 180rb" is a sentence nobody reads to the
+    #: end. The figures here come from the same tool call the model was
+    #: given, so the card and the reply cannot disagree, and the model
+    #: never gets to restate a number as a picture.
+    #:
+    #: Not a Draft: nothing here proposes a change, so none of the
+    #: confirmation machinery applies.
+    view: Mapped[dict | None] = mapped_column(JsonDoc, nullable=True)
+
+    #: The turn this one answers, when the user picked one.
+    #:
+    #: SET NULL rather than CASCADE: losing the quoted message must not
+    #: take the reply with it. A reply whose quote is gone still reads as
+    #: a message - it just stops showing the block above it.
+    reply_to_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    reply_to: Mapped[Message | None] = relationship(
+        "Message", remote_side="Message.id", lazy="joined"
     )
 
 

@@ -36,7 +36,7 @@ export function WalletSuggestions({ onPick, disabled = false }) {
   return (
     // Indented to the greeting's text column, so the chips read as part
     // of what was just said rather than as a toolbar.
-    <Stack direction="row" sx={{ pl: '36px', gap: 1, flexWrap: 'wrap' }}>
+    <Stack direction="row" sx={{ pl: '34px', gap: 1, flexWrap: 'wrap' }}>
       {WALLET_SUGGESTIONS.map((name) => (
         <Box
           key={name}

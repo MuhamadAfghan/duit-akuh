@@ -43,6 +43,18 @@ class DraftNotPending(Exception):
     code = "draft_not_pending"
 
 
+class BatchIncomplete(DraftNotPending):
+    """A batch with an entry whose wallet nobody has chosen yet.
+
+    The card leaves the slot blank and offers the wallets; this is the
+    gate behind it. A UI check alone would mean the rule lives only in
+    the client, and AC04's "never guess" has to hold against a request
+    the client did not make.
+    """
+
+    code = "batch_incomplete"
+
+
 def confirm_draft(db: DbSession, *, user_id: uuid.UUID, draft: Draft) -> dict:
     """Apply a pending draft. Returns a small summary for the chat card."""
     if draft.status is not DraftStatus.PENDING:
@@ -63,7 +75,80 @@ def confirm_draft(db: DbSession, *, user_id: uuid.UUID, draft: Draft) -> dict:
     if draft.kind == "budget":
         return _confirm_budget(db, user_id, draft)
 
+    if draft.kind == "batch":
+        return _confirm_batch(db, user_id, draft)
+
     return _confirm_transaction(db, user_id, draft)
+
+
+def _confirm_batch(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
+    """Post several entries as one act.
+
+    One swipe, one group, and all of it or none of it: these came from
+    one sentence, so a half-written batch would leave the person with
+    a ledger that matches neither what they said nor what they saw. The
+    session is not committed here, so a failure part-way rolls the
+    earlier entries back with it.
+
+    Each entry still gets its *own* idempotency key, derived from the
+    draft's operation id and the entry's position. One shared key would
+    make the second entry look like a replay of the first and silently
+    drop it; separate ones keep a retried confirmation landing on the
+    same rows (AC04, AC13).
+
+    The stated total is not posted. It never was a transaction - only a
+    claim about these entries, already checked by `reconcile` when the
+    card was built.
+    """
+    items = draft.payload.get("items") or []
+
+    if not items:
+        raise DraftNotPending("Draft tidak punya catatan")
+
+    if any(item.get("unresolved") for item in items):
+        raise BatchIncomplete("Masih ada catatan yang kantongnya belum dipilih")
+
+    zone = get_zone(getattr(db.get(User, user_id), "timezone", None))
+    group_id = uuid.uuid4()
+
+    posted = []
+    replayed = True
+
+    for index, item in enumerate(items):
+        payload = {key: value for key, value in item.items() if key != "unresolved"}
+        parsed = TypeAdapter(DraftSchema).validate_python(payload)
+
+        result = post_transaction(
+            db,
+            user_id=user_id,
+            tx_type=TRANSACTION_TYPES[parsed.type],
+            occurred_at=occurred_at_of(parsed, zone),
+            legs=build_legs(db, user_id, parsed),
+            idempotency_key=f"{draft.operation_id}:{index}",
+            merchant=parsed.merchant,
+            note=parsed.note,
+            source="chat",
+            allow_negative=parsed.allow_negative,
+            operation_id=draft.operation_id,
+            group_id=group_id,
+        )
+
+        posted.append(str(result.transaction.id))
+        replayed = replayed and result.replayed
+
+    draft.status = DraftStatus.CONFIRMED
+    # One column, several transactions: the first stands for the group
+    # so a card can still link somewhere, and `group_id` is what ties
+    # the rest of them together.
+    draft.transaction_id = uuid.UUID(posted[0])
+    db.flush()
+
+    return {
+        "draft_id": str(draft.id),
+        "group_id": str(group_id),
+        "transaction_ids": posted,
+        "replayed": replayed,
+    }
 
 
 def _confirm_transaction(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:

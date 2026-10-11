@@ -36,7 +36,13 @@ from sqlalchemy.orm import Session as DbSession
 from ...models import Account, AiRequestLog, Conversation, Draft, Message, MessageRole, User
 from ..ai.base import AiAdapter, AiError, ChatResult
 from .dispatch import dispatch
+from .sessions import active_conversation, name_if_unnamed
 from .tools import ALL_TOOLS, PROPOSE_TOOL_NAMES, build_system_prompt
+
+#: Read tools whose output the client knows how to draw, mapped to the
+#: card it should render. A tool not listed here is simply narrated, and
+#: adding one here is the only thing needed to make a new card appear.
+DRAWABLE_TOOLS = {"get_spending": "spending"}
 
 #: How many past turns to send. Enough for "the account I just
 #: mentioned" to resolve, small enough to leave room for tool results.
@@ -100,16 +106,16 @@ class TurnResult:
     degraded: bool = False
 
 
-def get_or_create_conversation(db: DbSession, user_id: uuid.UUID) -> Conversation:
-    """The single thread for this user (FR14, FR15)."""
-    conversation = db.scalar(select(Conversation).where(Conversation.user_id == user_id))
+def get_or_create_conversation(
+    db: DbSession, user_id: uuid.UUID, conversation_id: uuid.UUID | None = None
+) -> Conversation:
+    """The thread this turn belongs to (FR14, FR15).
 
-    if conversation is None:
-        conversation = Conversation(id=uuid.uuid4(), user_id=user_id)
-        db.add(conversation)
-        db.flush()
-
-    return conversation
+    Kept as a name here because every caller already used it; the
+    choosing lives in `services/chat/sessions.py` now that a user can
+    have more than one.
+    """
+    return active_conversation(db, user_id, conversation_id)
 
 
 def recent_messages(
@@ -139,7 +145,7 @@ def _as_prompt(messages: list[Message]) -> list[dict[str, Any]]:
 
     for message in messages:
         if message.body:
-            rendered.append({"role": message.role.value, "content": message.body})
+            rendered.append({"role": message.role.value, "content": _with_quote(message)})
         elif message.draft_id:
             rendered.append(
                 {
@@ -152,6 +158,37 @@ def _as_prompt(messages: list[Message]) -> list[dict[str, Any]]:
             )
 
     return rendered
+
+
+#: How much of a quoted turn the model is shown. The context window is
+#: 24,576 tokens for prompt *and* output, and a reply to a long answer
+#: would otherwise re-send the whole thing. The opening line is what
+#: identifies which message was meant.
+QUOTE_CHARS = 160
+
+
+def _with_quote(message: Message) -> str:
+    """The turn's text, prefixed with what it was replying to.
+
+    Rendered here rather than stored on the row, so the quote follows
+    whatever the original message says now and there is one copy of the
+    wording. It goes in the content because the OpenAI-compatible shape
+    has nowhere else to put it — and without it the model has no way to
+    know which of ten earlier answers a short "yang itu" refers to.
+    """
+    quoted = message.reply_to
+
+    if quoted is None or not quoted.body:
+        return message.body or ""
+
+    excerpt = " ".join(quoted.body.split())
+
+    if len(excerpt) > QUOTE_CHARS:
+        excerpt = f"{excerpt[:QUOTE_CHARS].rstrip()}…"
+
+    who = "kamu" if quoted.role is MessageRole.ASSISTANT else "aku"
+
+    return f'[Membalas pesan {who}: "{excerpt}"]\n{message.body}'
 
 
 def _log_ai(
@@ -186,7 +223,13 @@ def _log_ai(
 
 
 async def run_turn(
-    db: DbSession, *, user_id: uuid.UUID, adapter: AiAdapter, body: str
+    db: DbSession,
+    *,
+    user_id: uuid.UUID,
+    adapter: AiAdapter,
+    body: str,
+    reply_to_id: uuid.UUID | None = None,
+    conversation_id: uuid.UUID | None = None,
 ) -> TurnResult:
     """Process one message and return the finished turn.
 
@@ -196,7 +239,14 @@ async def run_turn(
     """
     result: TurnResult | None = None
 
-    async for event in run_turn_events(db, user_id=user_id, adapter=adapter, body=body):
+    async for event in run_turn_events(
+        db,
+        user_id=user_id,
+        adapter=adapter,
+        body=body,
+        reply_to_id=reply_to_id,
+        conversation_id=conversation_id,
+    ):
         if event["type"] == "done":
             result = event["result"]
 
@@ -211,6 +261,8 @@ async def run_turn_events(
     user_id: uuid.UUID,
     adapter: AiAdapter,
     body: str,
+    reply_to_id: uuid.UUID | None = None,
+    conversation_id: uuid.UUID | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Process one user message, yielding progress as it happens.
 
@@ -219,7 +271,11 @@ async def run_turn_events(
     carrying the TurnResult. The browser gets something to show within
     a second instead of a blank wait.
     """
-    conversation = get_or_create_conversation(db, user_id)
+    conversation = get_or_create_conversation(db, user_id, conversation_id)
+
+    # Named from the opening message, before it is stored, so a thread
+    # is recognisable in the list from its very first turn.
+    name_if_unnamed(conversation, body)
 
     db.add(
         Message(
@@ -228,6 +284,9 @@ async def run_turn_events(
             conversation_id=conversation.id,
             role=MessageRole.USER,
             body=body,
+            # Checked by the caller: it is the one holding the HTTP
+            # request and able to answer a bad id with a status code.
+            reply_to_id=reply_to_id,
         )
     )
     db.flush()
@@ -267,6 +326,9 @@ async def run_turn_events(
     prompt += _as_prompt(recent_messages(db, conversation.id))
 
     drafts: list[Draft] = []
+    #: A read tool's result the client can draw, if this turn produced
+    #: one. Set per turn, not per message: it belongs to the answer.
+    view: dict | None = None
     reply = ""
     degraded = False
 
@@ -332,6 +394,14 @@ async def run_turn_events(
 
             output = dispatch(db, user_id, call.name, call.arguments)
 
+            # A breakdown is worth drawing rather than reading out. The
+            # card is built from the tool's own output, so it carries
+            # the figures the model was given and not the ones it chose
+            # to repeat. Last one wins: if a turn asks twice, the card
+            # shows what the answer ended up being about.
+            if call.name in DRAWABLE_TOOLS and "error" not in output:
+                view = {"kind": DRAWABLE_TOOLS[call.name], "data": output}
+
             if call.name in PROPOSE_TOOL_NAMES and "error" not in output:
                 new_drafts = _collect_drafts(db, user_id, output)
                 drafts.extend(new_drafts)
@@ -372,6 +442,7 @@ async def run_turn_events(
         conversation_id=conversation.id,
         role=MessageRole.ASSISTANT,
         body=reply,
+        view=view,
     )
     db.add(assistant)
 

@@ -1122,3 +1122,862 @@ def test_archived_wallets_are_not_offered_to_the_model(chat):
     send(chat, "halo")
 
     assert "Dompet lama" not in chat.adapter.calls[-1]["messages"][0]["content"]
+
+
+# ----------------------------------------------------------------------
+# Revising a draft (FR05): the fix for a model that got one field wrong.
+
+
+def _expense_draft(chat, amount=35_000, wallet="bca"):
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {"transactions": [{"type": "expense", "amount": amount, "from_account": wallet}]},
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+    return send(chat, f"makan {amount} pakai {wallet}")["drafts"][0]
+
+
+def test_revising_an_amount_recomputes_the_impact(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 95_000}})
+    assert response.status_code == 200, response.text
+
+    revised = response.json()
+    assert revised["payload"]["amount"] == 95_000
+
+    # The figures must come from the ledger, not from the old card with
+    # a new number pasted in.
+    after = {r["account"]: r["after"] for r in revised["impact"]}
+    assert after["BCA"] == 905_000
+
+
+def test_a_revision_replaces_the_draft_so_the_old_id_cannot_post(chat):
+    """The id the client was holding must stop working, or a confirm
+    already in flight would post the figures the user just rejected."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    revised = chat.post(
+        f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 95_000}}
+    ).json()
+
+    assert revised["id"] != draft["id"]
+    assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 404
+
+    assert chat.post(f"/chat/drafts/{revised['id']}/confirm").status_code == 200
+    assert balances(chat)["BCA"] == 905_000
+
+
+def test_revising_writes_nothing_until_confirmed(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    chat.post(f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 95_000}})
+
+    assert balances(chat)["BCA"] == 1_000_000
+
+
+def test_a_revision_can_move_the_entry_to_another_wallet(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    gopay = make_account(chat, "GoPay", "ewallet", balance=200_000)
+    draft = _expense_draft(chat)
+
+    revised = chat.post(
+        f"/chat/drafts/{draft['id']}/revise", json={"patch": {"from_account_id": gopay["id"]}}
+    ).json()
+
+    assert chat.post(f"/chat/drafts/{revised['id']}/confirm").status_code == 200
+
+    money = balances(chat)
+    assert money["GoPay"] == 165_000
+    assert money["BCA"] == 1_000_000
+
+
+def test_the_revised_card_is_what_the_thread_shows(chat):
+    """One card per proposal. Editing twice must not leave the thread
+    with a trail of cancelled cards."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    first = chat.post(
+        f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 95_000}}
+    ).json()
+    second = chat.post(
+        f"/chat/drafts/{first['id']}/revise", json={"patch": {"amount": 40_000}}
+    ).json()
+
+    cards = [m["draft"] for m in chat.get("/chat/messages").json() if m["draft"]]
+    assert [c["id"] for c in cards] == [second["id"]]
+    assert cards[0]["payload"]["amount"] == 40_000
+
+
+def test_an_unknown_field_is_refused_rather_than_ignored(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/revise", json={"patch": {"ammount": 95_000}})
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_patch"
+
+    # Still pending: a refused patch must change nothing.
+    assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
+
+
+def test_a_revision_cannot_reach_another_users_wallet(chat, engine, monkeypatch):
+    """AC08: ownership is checked on the id, not assumed from the draft."""
+    import uuid as _uuid
+
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    response = chat.post(
+        f"/chat/drafts/{draft['id']}/revise",
+        json={"patch": {"from_account_id": str(_uuid.uuid4())}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "account_not_found"
+
+
+def test_a_revision_that_changes_nothing_is_refused(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 35_000}})
+    assert response.status_code == 422
+
+
+def test_a_non_integer_amount_is_refused(chat):
+    """FR03: money never becomes a float, not even on the way in."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    draft = _expense_draft(chat)
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 95_000.5}})
+    assert response.status_code == 422
+
+
+def test_only_money_drafts_can_be_revised(chat):
+    """A budget's payload has different rules; one patch format does not
+    fit every kind, and pretending it does drops fields silently."""
+    chat.adapter.queue(tool("propose_budget", {"category": "makan", "amount": 500_000}))
+    chat.adapter.queue(text("Ini draftnya."))
+    draft = send(chat, "budget makan 500rb")["drafts"][0]
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/revise", json={"patch": {"amount": 600_000}})
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "kind_not_revisable"
+
+
+# ----------------------------------------------------------------------
+# Replying to a turn.
+
+
+def _thread(chat) -> list[dict]:
+    return chat.get("/chat/messages").json()
+
+
+def test_a_reply_carries_the_quoted_turn_to_the_client(chat):
+    chat.adapter.queue(text("Bebas pakai lu Rp2.340.000."))
+    send(chat, "uang bebas pakai berapa?")
+
+    answer = next(m for m in _thread(chat) if m["role"] == "assistant")
+
+    chat.adapter.queue(text("Belum, itu belum termasuk tagihan kartu."))
+    chat.post(
+        "/chat/messages",
+        json={"body": "udah termasuk tagihan kartu?", "reply_to_id": answer["id"]},
+    ).raise_for_status()
+
+    reply = _thread(chat)[-2]
+    assert reply["body"] == "udah termasuk tagihan kartu?"
+    assert reply["reply_to"]["id"] == answer["id"]
+    assert reply["reply_to"]["role"] == "assistant"
+    assert reply["reply_to"]["excerpt"] == "Bebas pakai lu Rp2.340.000."
+
+
+def test_the_model_is_told_what_was_replied_to(chat):
+    """Without the quote a short "yang itu" is unanswerable: the model
+    has no way to know which of ten earlier answers was meant."""
+    chat.adapter.queue(text("Bebas pakai lu Rp2.340.000."))
+    send(chat, "uang bebas pakai berapa?")
+
+    answer = next(m for m in _thread(chat) if m["role"] == "assistant")
+
+    chat.adapter.queue(text("Belum."))
+    chat.post(
+        "/chat/messages", json={"body": "yang itu gimana?", "reply_to_id": answer["id"]}
+    ).raise_for_status()
+
+    sent = chat.adapter.calls[-1]["messages"]
+    quoting = [m for m in sent if m["role"] == "user" and "Membalas" in (m["content"] or "")]
+
+    assert quoting, sent
+    assert "Bebas pakai lu Rp2.340.000." in quoting[-1]["content"]
+    assert "yang itu gimana?" in quoting[-1]["content"]
+
+
+def test_a_long_quote_is_cut_before_it_reaches_the_model(chat):
+    """The context window is 24,576 tokens for prompt and output
+    together; quoting a whole answer back would spend it on repetition."""
+    chat.adapter.queue(text("A" * 900))
+    send(chat, "jelasin panjang lebar")
+
+    answer = next(m for m in _thread(chat) if m["role"] == "assistant")
+
+    chat.adapter.queue(text("Oke."))
+    chat.post(
+        "/chat/messages", json={"body": "ringkas dong", "reply_to_id": answer["id"]}
+    ).raise_for_status()
+
+    reply = _thread(chat)[-2]
+    assert len(reply["reply_to"]["excerpt"]) < 200
+    assert reply["reply_to"]["excerpt"].endswith("…")
+
+
+def test_cannot_quote_a_message_that_does_not_exist(chat):
+    response = chat.post("/chat/messages", json={"body": "halo", "reply_to_id": str(uuid.uuid4())})
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "message_not_found"
+
+
+def test_cannot_quote_another_users_message(chat, engine, monkeypatch):
+    """AC08: a quote is a read of someone's thread, so it is gated like
+    every other read."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    chat.adapter.queue(text("Rahasia."))
+    send(chat, "berapa saldo gua?")
+    mine = next(m for m in _thread(chat) if m["role"] == "assistant")
+
+    with TestClient(app) as other:
+        other.post(
+            "/auth/register", json={"email": "lain@example.com", "password": PASSWORD}
+        ).raise_for_status()
+
+        response = other.post(
+            "/chat/messages", json={"body": "itu apa?", "reply_to_id": mine["id"]}
+        )
+        assert response.status_code == 404
+
+
+def test_a_refused_quote_writes_no_message(chat):
+    """The id is checked before the turn starts, so a bad reference
+    costs nothing - no stored message, no call to the model."""
+    before = len(_thread(chat))
+
+    chat.post("/chat/messages", json={"body": "halo", "reply_to_id": str(uuid.uuid4())})
+
+    assert len(_thread(chat)) == before
+    assert chat.adapter.calls == []
+
+
+# ----------------------------------------------------------------------
+# Named threads. One conversation per user became several (FR14, FR15).
+
+
+def _threads(chat, **params) -> list[dict]:
+    response = chat.get("/chat/conversations", params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def test_a_fresh_account_lands_in_a_thread_without_choosing_one(chat):
+    """The unique constraint is gone; what it protected is not. Nobody
+    should have to create a conversation before they can type."""
+    chat.adapter.queue(text("Halo."))
+    send(chat, "halo")
+
+    threads = _threads(chat)
+    assert len(threads) == 1
+    assert threads[0]["preview"] == "Halo."
+
+
+def test_the_first_message_names_the_thread(chat):
+    chat.adapter.queue(text("Oke."))
+    send(chat, "rencana beli laptop akhir tahun")
+
+    assert _threads(chat)[0]["title"] == "rencana beli laptop akhir tahun"
+
+
+def test_a_long_first_message_is_clipped_into_a_title(chat):
+    chat.adapter.queue(text("Oke."))
+    send(chat, "tolong bantu gua " + "rapiin budget bulanan " * 10)
+
+    title = _threads(chat)[0]["title"]
+    assert len(title) <= 49
+    assert title.endswith("…")
+
+
+def test_threads_do_not_leak_into_each_other(chat):
+    chat.adapter.queue(text("Jawaban pertama."))
+    send(chat, "pertanyaan pertama")
+
+    second = chat.post("/chat/conversations").json()
+
+    chat.adapter.queue(text("Jawaban kedua."))
+    chat.post(
+        "/chat/messages", json={"body": "pertanyaan kedua", "conversation_id": second["id"]}
+    ).raise_for_status()
+
+    here = chat.get("/chat/messages", params={"conversation_id": second["id"]}).json()
+    bodies = [m["body"] for m in here]
+
+    assert "pertanyaan kedua" in bodies
+    assert "pertanyaan pertama" not in bodies
+
+
+def test_the_model_only_sees_the_thread_it_is_answering_in(chat):
+    """Context is per thread. Carrying one conversation's history into
+    another is both wrong and expensive against a 24,576-token window."""
+    chat.adapter.queue(text("Rahasia dari thread lama."))
+    send(chat, "catatan lama")
+
+    second = chat.post("/chat/conversations").json()
+
+    chat.adapter.queue(text("Oke."))
+    chat.post(
+        "/chat/messages", json={"body": "halo", "conversation_id": second["id"]}
+    ).raise_for_status()
+
+    sent = json.dumps(chat.adapter.calls[-1]["messages"], ensure_ascii=False)
+    assert "catatan lama" not in sent
+    assert "Rahasia dari thread lama" not in sent
+
+
+def test_a_new_turn_without_an_id_goes_to_the_most_recent_thread(chat):
+    chat.adapter.queue(text("Satu."))
+    send(chat, "pertama")
+
+    second = chat.post("/chat/conversations").json()
+    chat.adapter.queue(text("Dua."))
+    chat.post(
+        "/chat/messages", json={"body": "kedua", "conversation_id": second["id"]}
+    ).raise_for_status()
+
+    # No id this time: it must continue where the user last was.
+    chat.adapter.queue(text("Tiga."))
+    send(chat, "ketiga")
+
+    bodies = [m["body"] for m in chat.get("/chat/messages").json()]
+    assert "ketiga" in bodies
+    assert "pertama" not in bodies
+
+
+def test_renaming_a_thread(chat):
+    chat.adapter.queue(text("Oke."))
+    send(chat, "catat makan")
+
+    thread = _threads(chat)[0]
+    response = chat.patch(
+        f"/chat/conversations/{thread['id']}", json={"title": "  Belanja Oktober  "}
+    )
+    assert response.status_code == 200
+    assert response.json()["title"] == "Belanja Oktober"
+
+
+def test_a_blank_name_is_refused(chat):
+    chat.adapter.queue(text("Oke."))
+    send(chat, "catat makan")
+
+    thread = _threads(chat)[0]
+    response = chat.patch(f"/chat/conversations/{thread['id']}", json={"title": "   "})
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_title"
+
+
+def test_pinned_threads_sort_above_more_recent_ones(chat):
+    chat.adapter.queue(text("Satu."))
+    send(chat, "pertama")
+    first = _threads(chat)[0]["id"]
+
+    second = chat.post("/chat/conversations").json()
+    chat.adapter.queue(text("Dua."))
+    chat.post(
+        "/chat/messages", json={"body": "kedua", "conversation_id": second["id"]}
+    ).raise_for_status()
+
+    assert [t["id"] for t in _threads(chat)] == [second["id"], first]
+
+    chat.patch(f"/chat/conversations/{first}", json={"is_pinned": True}).raise_for_status()
+
+    assert [t["id"] for t in _threads(chat)] == [first, second["id"]]
+
+
+def test_archiving_hides_a_thread_and_drops_its_pin(chat):
+    chat.adapter.queue(text("Oke."))
+    send(chat, "catat makan")
+    thread = _threads(chat)[0]["id"]
+
+    chat.patch(f"/chat/conversations/{thread}", json={"is_pinned": True}).raise_for_status()
+    chat.patch(f"/chat/conversations/{thread}", json={"is_archived": True}).raise_for_status()
+
+    assert _threads(chat) == []
+
+    archived = _threads(chat, include_archived=True)
+    assert [t["id"] for t in archived] == [thread]
+    # Still pinned, it would jump the list the moment it came back.
+    assert archived[0]["is_pinned"] is False
+
+
+def test_an_archived_thread_can_still_be_read_and_answered(chat):
+    """Archiving takes a thread out of the list. It does not seal it."""
+    chat.adapter.queue(text("Oke."))
+    send(chat, "catat makan")
+    thread = _threads(chat)[0]["id"]
+
+    chat.patch(f"/chat/conversations/{thread}", json={"is_archived": True}).raise_for_status()
+
+    chat.adapter.queue(text("Masih bisa."))
+    chat.post(
+        "/chat/messages", json={"body": "masih kebaca?", "conversation_id": thread}
+    ).raise_for_status()
+
+    bodies = [
+        m["body"] for m in chat.get("/chat/messages", params={"conversation_id": thread}).json()
+    ]
+    assert "masih kebaca?" in bodies
+
+
+def test_archiving_the_last_thread_still_leaves_somewhere_to_type(chat):
+    chat.adapter.queue(text("Oke."))
+    send(chat, "catat makan")
+    thread = _threads(chat)[0]["id"]
+
+    chat.patch(f"/chat/conversations/{thread}", json={"is_archived": True}).raise_for_status()
+
+    chat.adapter.queue(text("Thread baru."))
+    send(chat, "halo lagi")
+
+    live = _threads(chat)
+    assert len(live) == 1
+    assert live[0]["id"] != thread
+
+
+def test_cannot_touch_another_users_thread(chat):
+    """AC08: zero cross-account access, threads included."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    chat.adapter.queue(text("Oke."))
+    send(chat, "catat makan")
+    mine = _threads(chat)[0]["id"]
+
+    with TestClient(app) as other:
+        other.post(
+            "/auth/register", json={"email": "lain2@example.com", "password": PASSWORD}
+        ).raise_for_status()
+
+        assert (
+            other.patch(f"/chat/conversations/{mine}", json={"title": "milikku"}).status_code == 404
+        )
+        assert other.get("/chat/messages", params={"conversation_id": mine}).status_code == 404
+        assert (
+            other.post("/chat/messages", json={"body": "halo", "conversation_id": mine}).status_code
+            == 404
+        )
+
+
+def test_cannot_quote_a_message_from_another_thread(chat):
+    """A quote lifted across threads arrives with no context behind it,
+    and the model would be answering about a turn it cannot see."""
+    chat.adapter.queue(text("Jawaban di thread lama."))
+    send(chat, "pertanyaan lama")
+    old = next(m for m in chat.get("/chat/messages").json() if m["role"] == "assistant")
+
+    second = chat.post("/chat/conversations").json()
+
+    response = chat.post(
+        "/chat/messages",
+        json={"body": "itu gimana?", "conversation_id": second["id"], "reply_to_id": old["id"]},
+    )
+    assert response.status_code == 404
+
+
+# ----------------------------------------------------------------------
+# Several entries from one sentence.
+
+
+def _wallets(chat):
+    make_account(chat, "Tunai", "cash", balance=486_000, alias="cash")
+    make_account(chat, "GoPay", "ewallet", balance=184_000, alias="gopay")
+    make_account(chat, "BCA", balance=2_255_000, alias="bca")
+
+
+def _batch(chat, items, stated_total=None, body="tadi pagi belanja"):
+    args = {"transactions": items}
+
+    if stated_total is not None:
+        args["stated_total"] = stated_total
+
+    chat.adapter.queue(tool("propose_transactions", args))
+    chat.adapter.queue(text("Ini draftnya."))
+
+    return send(chat, body)["drafts"]
+
+
+def test_one_sentence_of_three_entries_makes_one_card(chat):
+    """One thing said, one thing to confirm. Three cards would be three
+    swipes for one sentence, and a half-posted batch if one failed."""
+    _wallets(chat)
+
+    drafts = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "cash", "category": "obat"},
+            {"type": "expense", "amount": 70_000, "from_account": "cash", "category": "makan"},
+            {"type": "expense", "amount": 30_000, "from_account": "cash", "category": "minum"},
+        ],
+        stated_total=150_000,
+    )
+
+    assert len(drafts) == 1
+    assert drafts[0]["kind"] == "batch"
+    assert len(drafts[0]["payload"]["items"]) == 3
+
+
+def test_the_spoken_total_is_not_recorded_as_a_fourth_entry(chat):
+    """The whole point: 50 + 70 + 30 with 150rb said out loud has to
+    take 150.000 out of the wallet, not 300.000."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "cash"},
+            {"type": "expense", "amount": 70_000, "from_account": "cash"},
+            {"type": "expense", "amount": 30_000, "from_account": "cash"},
+        ],
+        stated_total=150_000,
+    )[0]
+
+    assert draft["payload"]["matches"] is True
+    assert draft["payload"]["items_total"] == 150_000
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    assert balances(chat)["Tunai"] == 336_000
+
+
+def test_the_card_shows_one_before_and_after_per_wallet(chat):
+    """Two expenses from one wallet are one movement of that balance,
+    not two overlapping previews of the same number."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "cash"},
+            {"type": "expense", "amount": 70_000, "from_account": "cash"},
+        ],
+    )[0]
+
+    cash = [row for row in draft["impact"] if row["account"] == "Tunai"]
+
+    assert len(cash) == 1
+    assert cash[0]["before"] == 486_000
+    assert cash[0]["after"] == 366_000
+
+
+def test_a_mismatch_is_surfaced_and_only_the_parts_are_posted(chat):
+    """Said 200, itemised 150. The backend reports the gap and refuses
+    to invent an entry for it."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "cash"},
+            {"type": "expense", "amount": 70_000, "from_account": "cash"},
+            {"type": "expense", "amount": 30_000, "from_account": "cash"},
+        ],
+        stated_total=200_000,
+    )[0]
+
+    assert draft["payload"]["matches"] is False
+    assert draft["payload"]["difference"] == 50_000
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    assert balances(chat)["Tunai"] == 336_000
+
+
+def test_entries_confirmed_together_share_a_group(chat):
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "gopay"},
+            {"type": "expense", "amount": 30_000, "from_account": "bca"},
+        ],
+    )[0]
+
+    body = chat.post(f"/chat/drafts/{draft['id']}/confirm").json()
+
+    assert len(body["transaction_ids"]) == 2
+    assert body["group_id"]
+
+
+def test_confirming_a_batch_twice_posts_it_once(chat):
+    """AC13. Each entry carries its own key derived from the operation
+    id - one shared key would make the second entry look like a replay
+    of the first and drop it."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "cash"},
+            {"type": "expense", "amount": 70_000, "from_account": "cash"},
+        ],
+    )[0]
+
+    assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
+    assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 404
+
+    assert balances(chat)["Tunai"] == 366_000
+
+
+def test_an_unclear_wallet_leaves_the_entry_blank_instead_of_failing(chat):
+    """A wallet named next to one item does not cover the one before
+    it. Erroring would throw away the two the model read correctly."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "gopay"},
+            {"type": "expense", "amount": 70_000},
+            {"type": "expense", "amount": 30_000, "from_account": "bca"},
+        ],
+        stated_total=150_000,
+    )[0]
+
+    items = draft["payload"]["items"]
+
+    assert items[0]["unresolved"] == []
+    assert items[1]["unresolved"] == ["from_account_id"]
+    assert items[2]["unresolved"] == []
+
+
+def test_a_batch_with_an_unchosen_wallet_cannot_be_confirmed(chat):
+    """AC04 enforced on the server, not only by a disabled button."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "gopay"},
+            {"type": "expense", "amount": 70_000},
+        ],
+    )[0]
+
+    response = chat.post(f"/chat/drafts/{draft['id']}/confirm")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "batch_incomplete"
+    assert balances(chat)["GoPay"] == 184_000
+
+
+def test_choosing_the_missing_wallet_unlocks_the_batch(chat):
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "gopay"},
+            {"type": "expense", "amount": 70_000},
+        ],
+    )[0]
+
+    bca = next(a for a in chat.get("/accounts").json() if a["name"] == "BCA")
+
+    revised = chat.post(
+        f"/chat/drafts/{draft['id']}/revise",
+        json={"patch": {"item": 1, "from_account_id": bca["id"]}},
+    )
+    assert revised.status_code == 200, revised.text
+
+    body = revised.json()
+    assert body["payload"]["items"][1]["unresolved"] == []
+
+    chat.post(f"/chat/drafts/{body['id']}/confirm").raise_for_status()
+
+    money = balances(chat)
+    assert money["GoPay"] == 134_000
+    assert money["BCA"] == 2_185_000
+
+
+def test_an_unresolved_entry_is_left_out_of_the_preview(chat):
+    """An impact row for a wallet nobody has chosen would be a figure
+    the backend made up."""
+    _wallets(chat)
+
+    draft = _batch(
+        chat,
+        [
+            {"type": "expense", "amount": 50_000, "from_account": "gopay"},
+            {"type": "expense", "amount": 70_000},
+        ],
+    )[0]
+
+    assert [row["account"] for row in draft["impact"] if row["account"] == "BCA"] == []
+
+    gopay = next(row for row in draft["impact"] if row["account"] == "GoPay")
+    assert gopay["after"] == 134_000
+
+
+def test_a_single_entry_is_still_a_plain_card(chat):
+    """Nothing changes for the ordinary one-line case."""
+    _wallets(chat)
+
+    drafts = _batch(chat, [{"type": "expense", "amount": 35_000, "from_account": "bca"}])
+
+    assert len(drafts) == 1
+    assert drafts[0]["kind"] == "expense"
+
+
+# ----------------------------------------------------------------------
+# A breakdown the client can draw, rather than only read out.
+
+
+def test_a_spending_question_attaches_a_card_to_the_answer(chat):
+    """Prose is a bad way to deliver a breakdown. The card is built
+    from the tool's own output, so the picture and the sentence cannot
+    disagree about the numbers."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "expense",
+                        "amount": 35_000,
+                        "from_account": "bca",
+                        "category": "Makan",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+    draft = send(chat, "makan 35rb pakai bca")["drafts"][0]
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    chat.adapter.queue(tool("get_spending", {"period": "bulan_ini"}))
+    chat.adapter.queue(text("Bulan ini kamu keluar Rp35.000."))
+    send(chat, "pengeluaran bulan ini berapa?")
+
+    answer = [m for m in chat.get("/chat/messages").json() if m["role"] == "assistant"][-1]
+
+    assert answer["view"]["kind"] == "spending"
+    assert answer["view"]["data"]["expense_total"] == 35_000
+    assert [c["name"] for c in answer["view"]["data"]["categories"]] == ["Makan"]
+
+
+def test_an_ordinary_answer_carries_no_card(chat):
+    chat.adapter.queue(text("Halo!"))
+    send(chat, "halo")
+
+    answer = [m for m in chat.get("/chat/messages").json() if m["role"] == "assistant"][-1]
+
+    assert answer["view"] is None
+
+
+def test_the_breakdown_comes_with_the_window_before_it(chat):
+    """A total answers "what did I spend". The comparison answers the
+    question people actually ask, which is whether that is a lot."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(tool("get_spending", {"period": "bulan_ini"}))
+    chat.adapter.queue(text("Belum ada pengeluaran."))
+    send(chat, "pengeluaran bulan ini?")
+
+    data = [m for m in chat.get("/chat/messages").json() if m["role"] == "assistant"][-1]["view"][
+        "data"
+    ]
+
+    assert "previous_expense_total" in data
+    assert isinstance(data["previous_expense_total"], int)
+
+
+def test_a_category_over_its_budget_says_by_how_much(chat):
+    """Colour alone cannot carry it (FR18), so the figure travels with
+    the row and the card has something to put in words."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+    chat.put("/budgets", json={"category": "Makan", "amount": 20_000}).raise_for_status()
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "expense",
+                        "amount": 35_000,
+                        "from_account": "bca",
+                        "category": "Makan",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+    draft = send(chat, "makan 35rb pakai bca")["drafts"][0]
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    chat.adapter.queue(tool("get_spending", {"period": "bulan_ini"}))
+    chat.adapter.queue(text("Makan lewat budget."))
+    send(chat, "pengeluaran bulan ini?")
+
+    data = [m for m in chat.get("/chat/messages").json() if m["role"] == "assistant"][-1]["view"][
+        "data"
+    ]
+    makan = next(c for c in data["categories"] if c["name"] == "Makan")
+
+    assert makan["limit"] == 20_000
+    assert makan["over"] == 15_000
+
+
+def test_a_category_with_no_budget_is_not_called_within_one(chat):
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "expense",
+                        "amount": 35_000,
+                        "from_account": "bca",
+                        "category": "Kopi",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+    draft = send(chat, "kopi 35rb pakai bca")["drafts"][0]
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    chat.adapter.queue(tool("get_spending", {"period": "bulan_ini"}))
+    chat.adapter.queue(text("Kopi 35rb."))
+    send(chat, "pengeluaran bulan ini?")
+
+    data = [m for m in chat.get("/chat/messages").json() if m["role"] == "assistant"][-1]["view"][
+        "data"
+    ]
+    kopi = next(c for c in data["categories"] if c["name"] == "Kopi")
+
+    assert kopi["limit"] is None
+    assert kopi["over"] is None

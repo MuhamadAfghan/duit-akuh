@@ -1,9 +1,15 @@
 import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
 
 import { formatRupiah } from 'src/utils/format-money';
 
-import { BoardNote } from '../../common';
+import { Iconify } from 'src/components/iconify';
+
+import { BatchBody } from './batch-card';
+import { Pill, Money, BoardNote } from '../../common';
 import { TwoSided, DetailRow, ActionCard, ImpactLine } from './action-card';
 
 // ----------------------------------------------------------------------
@@ -54,9 +60,42 @@ const SETTLED_MESSAGES = {
  * aside. Those are the rules the ledger enforces, said where somebody
  * is about to act on them.
  */
-function describe(card, names) {
+export function describeDraft(card, names, options = {}) {
   const { payload = {}, kind } = card;
   const impact = card.impact ?? [];
+
+  if (kind === 'batch') {
+    const items = payload.items ?? [];
+    const kinds = new Set(items.map((item) => item.type));
+    const wallets = new Set(
+      items.map((item) => names[item.from_account_id] ?? names[item.to_account_id]).filter(Boolean)
+    );
+    const blocked = items.filter((item) => (item.unresolved ?? []).length).length;
+
+    return {
+      kicker: `${items.length} ${kinds.size === 1 ? (TYPE_KICKERS[[...kinds][0]] ?? 'CATATAN') : 'CATATAN'}`,
+      // Negative because a batch is only ever offered for things that
+      // already happened, and every kind in it moves money out of or
+      // into named wallets - the sum is what leaves the person's hands.
+      amount: -(payload.items_total ?? 0),
+      amountSigned: true,
+      subtitle: wallets.size === 1 ? [...wallets][0] : `${wallets.size || 'Belum ada'} kantong`,
+      confirmLabel: `Geser untuk simpan ${items.length} catatan`,
+      // The server refuses an incomplete batch too; this only saves the
+      // round trip and says which answer is missing.
+      blockedReason: blocked
+        ? `Pilih kantong ${blocked > 1 ? `${blocked} catatan` : 'catatannya'} dulu`
+        : null,
+      body: (
+        <BatchBody
+          payload={{ ...payload, impactRows: impact }}
+          names={names}
+          accounts={options.accounts ?? []}
+          onPatchItem={options.onPatchItem}
+        />
+      ),
+    };
+  }
 
   if (kind === 'goal') {
     return {
@@ -243,8 +282,35 @@ function Impacts({ impact }) {
 
 // ----------------------------------------------------------------------
 
-export function DraftCard({ card, names = {}, onConfirm, onCancel }) {
-  const described = describe(card, names);
+/**
+ * The card in the thread.
+ *
+ * A *pending* draft is not decided here any more — it opens in a sheet
+ * (`DraftSheet`), which is the only surface big enough to show the
+ * figures, the impact and an editor without the keyboard pushing the
+ * confirmation off screen. What stays in the thread is a stub, so a
+ * dismissed sheet leaves a way back in rather than a draft you can
+ * only reach by scrolling and guessing.
+ *
+ * A *settled* draft is the full receipt, exactly as before: that is
+ * the record of what happened, and it belongs in the history.
+ */
+export function DraftCard({
+  card,
+  names = {},
+  sheet = false,
+  onOpen,
+  onConfirm,
+  onCancel,
+  onRevise,
+}) {
+  const described = describeDraft(card, names);
+
+  // `sheet` is the same card rendered inside DraftSheet, where it is
+  // the whole point of the surface rather than a line in a history.
+  if (card.status === 'pending' && !sheet) {
+    return <PendingStub described={described} onOpen={onOpen} />;
+  }
 
   return (
     <ActionCard
@@ -255,12 +321,74 @@ export function DraftCard({ card, names = {}, onConfirm, onCancel }) {
       tone={described.tone}
       destructive={described.destructive}
       confirmLabel={described.confirmLabel}
+      blockedReason={described.blockedReason}
       status={CARD_STATUS[card.status] ?? 'draft'}
       statusMessage={SETTLED_MESSAGES[card.status]}
       onConfirm={onConfirm}
+      onRevise={onRevise}
       onCancel={onCancel}
     >
       <Box sx={{ pb: 0.5 }}>{described.body}</Box>
     </ActionCard>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+function PendingStub({ described, onOpen }) {
+  return (
+    <Card sx={{ width: 1, borderRadius: 3, overflow: 'hidden' }}>
+      <Box sx={{ px: 2.25, py: 2 }}>
+        <Stack direction="row" sx={{ gap: 1, alignItems: 'center' }}>
+          <Typography
+            noWrap
+            sx={{
+              flexGrow: 1,
+              minWidth: 0,
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+              color: 'text.secondary',
+            }}
+          >
+            {described.kicker}
+          </Typography>
+
+          <Pill>BELUM TERSIMPAN</Pill>
+        </Stack>
+
+        {described.amount != null && (
+          <Money
+            amount={described.amount}
+            signed={described.amountSigned}
+            sx={{ mt: 1, fontSize: 28, lineHeight: '32px', fontWeight: 800 }}
+          />
+        )}
+
+        {described.subtitle && (
+          <Typography sx={{ mt: 0.5, fontSize: 14, fontWeight: 600, color: 'text.secondary' }}>
+            {described.subtitle}
+          </Typography>
+        )}
+
+        <Button
+          fullWidth
+          onClick={onOpen}
+          endIcon={<Iconify icon="lega:arrow-right" width={18} />}
+          sx={{
+            mt: 2,
+            minHeight: 48,
+            fontSize: 15,
+            fontWeight: 800,
+            borderRadius: 999,
+            color: 'common.white',
+            bgcolor: 'text.primary',
+            '&:hover': { bgcolor: 'grey.700' },
+          }}
+        >
+          Cek &amp; konfirmasi
+        </Button>
+      </Box>
+    </Card>
   );
 }

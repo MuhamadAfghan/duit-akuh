@@ -120,8 +120,8 @@ def reset_tables():
     against their own session factory.
 
     Self-referential foreign keys have to be broken before the delete.
-    ``transactions.reverses_id`` and ``accounts.linked_account_id`` both
-    reference their own table with ON DELETE RESTRICT. PostgreSQL checks
+    ``transactions.reverses_id``, ``accounts.linked_account_id`` and
+    ``messages.reply_to_id`` all reference their own table. PostgreSQL checks
     that at the end of the statement, so a bulk ``DELETE`` over the whole
     table succeeds; MySQL checks row by row in an unspecified order and
     aborts with "Cannot delete or update a parent row" the moment it
@@ -139,6 +139,7 @@ def reset_tables():
             Entry,
             Goal,
             LoginAttempt,
+            Message,
             PasswordResetRequest,
             Session,
             Transaction,
@@ -152,6 +153,7 @@ def reset_tables():
             cleanup.query(Account).update(
                 {Account.linked_account_id: None}, synchronize_session=False
             )
+            cleanup.query(Message).update({Message.reply_to_id: None}, synchronize_session=False)
 
             for model in (
                 AuditEvent,

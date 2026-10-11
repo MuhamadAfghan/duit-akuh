@@ -250,7 +250,11 @@ export const transactionsApi = {
  * once it has. By then the 200 has already been sent, so a client that
  * only checked the status would read a failed turn as a success.
  */
-export async function streamChat(body, onEvent, { signal } = {}) {
+export async function streamChat(
+  body,
+  onEvent,
+  { signal, replyToId = null, conversationId = null } = {}
+) {
   let response;
 
   try {
@@ -259,7 +263,11 @@ export async function streamChat(body, onEvent, { signal } = {}) {
       signal,
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({
+        body,
+        reply_to_id: replyToId,
+        conversation_id: conversationId,
+      }),
     });
   } catch (error) {
     if (error.name === 'AbortError') {
@@ -309,10 +317,36 @@ export async function streamChat(body, onEvent, { signal } = {}) {
   }
 }
 
+/**
+ * Named threads.
+ *
+ * `active` is what the chat opens on: it resolves the most recently
+ * used thread and creates one when the account has none, so nothing in
+ * the UI has to handle "no conversation yet".
+ */
+export const conversationsApi = {
+  list: ({ includeArchived = false } = {}) =>
+    api.get(`/chat/conversations${includeArchived ? '?include_archived=true' : ''}`),
+  active: () => api.get('/chat/conversations/active'),
+  create: () => api.post('/chat/conversations'),
+  update: (id, patch) => api.patch(`/chat/conversations/${id}`, patch),
+};
+
 export const chatApi = {
-  messages: () => api.get('/chat/messages'),
-  send: (body, { signal } = {}) => api.post('/chat/messages', { body }, { signal }),
+  messages: (conversationId = null) =>
+    api.get(conversationId ? `/chat/messages?conversation_id=${conversationId}` : '/chat/messages'),
+  send: (body, { signal, replyToId = null, conversationId = null } = {}) =>
+    api.post(
+      '/chat/messages',
+      { body, reply_to_id: replyToId, conversation_id: conversationId },
+      { signal }
+    ),
   stream: streamChat,
   confirmDraft: (id) => api.post(`/chat/drafts/${id}/confirm`),
+  /**
+   * Edits a pending draft. Returns a *different* draft: the server
+   * cancels this one and replaces it, so the id you had stops working.
+   */
+  reviseDraft: (id, patch) => api.post(`/chat/drafts/${id}/revise`, { patch }),
   cancelDraft: (id) => api.post(`/chat/drafts/${id}/cancel`),
 };

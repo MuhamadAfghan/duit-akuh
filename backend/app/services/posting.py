@@ -131,6 +131,7 @@ def post_transaction(
     reverses_id: uuid.UUID | None = None,
     allow_negative: bool = False,
     operation_id: str | None = None,
+    group_id: uuid.UUID | None = None,
 ) -> PostResult:
     """Write one balanced transaction, idempotently.
 
@@ -176,6 +177,7 @@ def post_transaction(
         source=source,
         idempotency_key=idempotency_key,
         reverses_id=reverses_id,
+        group_id=group_id,
     )
     transaction.entries = [
         Entry(user_id=user_id, account_id=leg.account_id, amount=leg.amount) for leg in legs

@@ -44,8 +44,10 @@ export function ActionCard({
   status = 'draft',
   statusMessage,
   confirmLabel = 'Geser untuk konfirmasi',
+  blockedReason = null,
   destructive = false,
   onConfirm,
+  onRevise,
   onCancel,
 }) {
   const isPending = status === 'draft';
@@ -166,22 +168,59 @@ export function ActionCard({
             </Stack>
           ) : (
             <>
+              {/* A locked track rather than a hidden one: the swipe is
+                  where the eye goes, so its absence would read as a
+                  card that cannot be saved at all. Saying what is
+                  missing turns it into an instruction. */}
               <SwipeConfirm
-                label={confirmLabel}
+                label={blockedReason ?? confirmLabel}
                 busy={isSaving}
-                disabled={isSaving}
+                disabled={isSaving || Boolean(blockedReason)}
                 onConfirm={onConfirm}
               />
 
-              {onCancel && (
-                <Button
-                  fullWidth
-                  onClick={onCancel}
-                  disabled={isSaving}
-                  sx={{ mt: 1, minHeight: 40, fontWeight: 700, color: 'text.secondary' }}
-                >
-                  Batal
-                </Button>
+              {/* The way out of a wrong number. It sits beside Batal
+                  rather than above the swipe because reading the card
+                  comes first: you check the figure, and only then
+                  decide whether to commit it, fix it, or drop it. */}
+              {(onRevise || onCancel) && (
+                <Stack direction="row" sx={{ mt: 1, gap: 1 }}>
+                  {onRevise && (
+                    <Button
+                      fullWidth
+                      onClick={onRevise}
+                      disabled={isSaving}
+                      startIcon={<Iconify icon="solar:pen-bold" width={18} />}
+                      sx={{
+                        minHeight: 44,
+                        fontWeight: 800,
+                        borderRadius: 999,
+                        border: '1.5px solid',
+                        borderColor: 'grey.300',
+                        color: 'text.primary',
+                      }}
+                    >
+                      Ubah dulu
+                    </Button>
+                  )}
+
+                  {onCancel && (
+                    <Button
+                      fullWidth={!onRevise}
+                      onClick={onCancel}
+                      disabled={isSaving}
+                      sx={{
+                        px: 2.5,
+                        minHeight: 44,
+                        fontWeight: 700,
+                        borderRadius: 999,
+                        color: 'text.secondary',
+                      }}
+                    >
+                      Batal
+                    </Button>
+                  )}
+                </Stack>
               )}
             </>
           )}

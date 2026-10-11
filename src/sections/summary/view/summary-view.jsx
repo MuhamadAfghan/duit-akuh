@@ -221,7 +221,9 @@ function MenuGrid({ budgets, goals }) {
   const tiles = [
     {
       href: paths.budget,
-      icon: 'lega:chart',
+      // Not `lega:chart`: Ringkasan wears that in the tab bar, and the
+      // two sit side by side in the chat's menu grid.
+      icon: 'solar:chart-square-outline',
       label: 'Budget',
       hint: exceeded ? `${exceeded} kategori lewat limit` : 'Semua masih aman',
       alert: exceeded > 0,
