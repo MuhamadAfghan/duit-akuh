@@ -129,6 +129,16 @@ export const authApi = {
   login: (email, password) => api.post('/auth/login', { email, password }),
   register: (email, password) => api.post('/auth/register', { email, password }),
   logout: () => api.post('/auth/logout'),
+
+  /**
+   * Always resolves for a well-formed address, registered or not. The
+   * backend answers 202 either way on purpose, so there is nothing here
+   * to branch on and nothing to tell the user beyond "check your mail".
+   */
+  forgotPassword: (email) => api.post('/auth/forgot-password', { email }),
+
+  resetPassword: (token, newPassword) =>
+    api.post('/auth/reset-password', { token, new_password: newPassword }),
 };
 
 export const accountsApi = {

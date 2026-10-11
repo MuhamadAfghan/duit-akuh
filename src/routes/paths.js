@@ -21,6 +21,9 @@ export const paths = {
   auth: {
     signIn: `${ROOTS.AUTH}/sign-in`,
     signUp: `${ROOTS.AUTH}/sign-up`,
+    forgot: `${ROOTS.AUTH}/lupa`,
+    checkEmail: `${ROOTS.AUTH}/cek-email`,
+    reset: `${ROOTS.AUTH}/reset`,
   },
   // DASHBOARD
   dashboard: {
