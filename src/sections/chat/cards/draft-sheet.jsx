@@ -46,6 +46,7 @@ export function DraftSheet({
   accounts = [],
   open,
   saving = false,
+  error: confirmError = null,
   onClose,
   onConfirm,
   onCancel,
@@ -61,6 +62,9 @@ export function DraftSheet({
     setMode('confirm');
     setError(null);
   }, [card?.draftId]);
+
+  // The refusal belongs with the control that was refused.
+  const shown = mode === 'revise' ? error : (error ?? confirmError);
 
   if (!card) {
     return null;
@@ -110,28 +114,48 @@ export function DraftSheet({
           card={card}
           accounts={accounts}
           saving={saving}
-          error={error}
+          error={shown}
           onApply={handleApply}
           onBack={() => setMode('confirm')}
         />
       ) : (
-        <DraftCard
-          card={{ ...card, status: saving ? 'saving' : card.status }}
-          names={names}
-          accounts={accounts}
-          sheet
-          onConfirm={onConfirm}
-          onCancel={onCancel}
-          // A batch has no single amount or wallet to edit, so it gets
-          // no form: each entry is fixed where it sits, which is also
-          // where the problem is visible.
-          onRevise={REVISABLE.has(card.kind) ? () => setMode('revise') : undefined}
-          onPatchItem={
-            card.kind === BATCH
-              ? (index, fields) => handleApply({ item: index, ...fields })
-              : undefined
-          }
-        />
+        <>
+          {shown && (
+            <Box
+              role="alert"
+              sx={{
+                mb: 1.25,
+                px: 1.75,
+                py: 1.25,
+                fontSize: 13,
+                fontWeight: 700,
+                borderRadius: 2,
+                color: 'error.darker',
+                bgcolor: 'error.lighter',
+              }}
+            >
+              {shown}
+            </Box>
+          )}
+
+          <DraftCard
+            card={{ ...card, status: saving ? 'saving' : card.status }}
+            names={names}
+            accounts={accounts}
+            sheet
+            onConfirm={onConfirm}
+            onCancel={onCancel}
+            // A batch has no single amount or wallet to edit, so it gets
+            // no form: each entry is fixed where it sits, which is also
+            // where the problem is visible.
+            onRevise={REVISABLE.has(card.kind) ? () => setMode('revise') : undefined}
+            onPatchItem={
+              card.kind === BATCH
+                ? (index, fields) => handleApply({ item: index, ...fields })
+                : undefined
+            }
+          />
+        </>
       )}
     </Drawer>
   );

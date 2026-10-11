@@ -66,7 +66,7 @@ export function BatchBody({ payload, names, accounts, onPatchItem }) {
         ))}
       </Stack>
 
-      <Impacts impact={payload.impactRows ?? []} />
+      <Impacts impact={payload.impactRows ?? []} accounts={accounts} />
     </Stack>
   );
 }
@@ -225,16 +225,92 @@ function ItemRow({ item, names, accounts, onPick }) {
 
 // ----------------------------------------------------------------------
 
-function Impacts({ impact }) {
-  if (!impact.length) {
+/**
+ * What the wallets do, and only the wallets.
+ *
+ * The ledger's impact covers every account a posting touches, category
+ * accounts included — that is what makes it double entry. On a
+ * confirmation card it is noise: each entry already names its own
+ * category one row above, and "Kesehatan 0 → 50.000" reads like a
+ * second balance moving rather than a running total nobody asked for.
+ *
+ * Filtered by name because that is what the stored impact rows carry.
+ * An account the list does not know (an archived wallet, say) is kept
+ * rather than hidden: a balance change the card did not mention is the
+ * one mistake this block exists to prevent.
+ */
+function Impacts({ impact, accounts }) {
+  const categories = new Set(
+    impact
+      .map((row) => row.account)
+      .filter((name) => !accounts.some((account) => account.name === name))
+  );
+
+  // Nothing recognisable: show it all rather than an empty block.
+  const rows =
+    categories.size < impact.length ? impact.filter((row) => !categories.has(row.account)) : impact;
+
+  if (!rows.length) {
     return null;
   }
 
   return (
     <Stack sx={{ gap: 0.75 }}>
-      {impact.map((row) => (
+      <Typography
+        sx={{
+          fontSize: 10,
+          fontWeight: 800,
+          letterSpacing: '0.07em',
+          color: 'text.secondary',
+        }}
+      >
+        KALAU DISIMPAN
+      </Typography>
+
+      {rows.map((row) => (
         <ImpactLine key={row.account} label={row.account} before={row.before} after={row.after} />
       ))}
+
+      <Overdrawn rows={rows} />
+    </Stack>
+  );
+}
+
+/**
+ * A wallet this batch would push below zero.
+ *
+ * The PRD allows a negative balance only after a warning and an
+ * explicit confirmation, and the confirmation endpoint enforces the
+ * second half: it refuses with `insufficient_balance`. Without this the
+ * first a person hears of it is a swipe that fails, which is the worst
+ * place to learn it — the figures were on screen the whole time.
+ */
+function Overdrawn({ rows }) {
+  const negative = rows.filter((row) => row.after < 0);
+
+  if (!negative.length) {
+    return null;
+  }
+
+  // One template string rather than text around a JSX expression:
+  // whichever way prettier wraps the line, the spacing cannot change.
+  const sentence =
+    `${negative.map((row) => row.account).join(' dan ')} bakal minus. ` +
+    'lega nggak bakal nyimpen ini — kurangin dulu angkanya, atau pindah ke kantong lain.';
+
+  return (
+    <Stack
+      direction="row"
+      sx={{ mt: 0.5, gap: 1, p: 1.25, borderRadius: 2, bgcolor: 'error.lighter' }}
+    >
+      <Iconify
+        width={17}
+        icon="solar:danger-triangle-bold"
+        sx={{ mt: 0.1, flexShrink: 0, color: 'error.dark' }}
+      />
+      <Typography sx={{ fontSize: 12, lineHeight: '17px', fontWeight: 700, color: 'error.darker' }}>
+        {sentence}
+      </Typography>
     </Stack>
   );
 }

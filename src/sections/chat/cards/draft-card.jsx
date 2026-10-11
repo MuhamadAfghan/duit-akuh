@@ -298,13 +298,15 @@ function Impacts({ impact }) {
 export function DraftCard({
   card,
   names = {},
+  accounts = [],
   sheet = false,
   onOpen,
   onConfirm,
   onCancel,
   onRevise,
+  onPatchItem,
 }) {
-  const described = describeDraft(card, names);
+  const described = describeDraft(card, names, { accounts, onPatchItem });
 
   // `sheet` is the same card rendered inside DraftSheet, where it is
   // the whole point of the surface rather than a line in a history.

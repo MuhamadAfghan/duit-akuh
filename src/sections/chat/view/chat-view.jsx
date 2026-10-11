@@ -135,6 +135,9 @@ export function ChatView() {
   //: not decide anything.
   const [sheetDraftId, setSheetDraftId] = useState(null);
   const [draftBusy, setDraftBusy] = useState(false);
+  //: Why the last confirmation was refused. Cleared whenever the sheet
+  //: moves on - a stale reason beside a fresh draft is worse than none.
+  const [draftError, setDraftError] = useState(null);
   //: The turn the next message answers, as {id, role, excerpt}. Held
   //: here rather than in the composer because the thread is what picks
   //: it and the send is what consumes it.
@@ -469,11 +472,16 @@ export function ChatView() {
         )
       );
 
+      setDraftError(null);
+
       try {
         await chatApi.confirmDraft(card.draftId);
-      } catch {
-        // Fall through to reload: the server's state is the truth about
-        // whether anything was saved.
+      } catch (error) {
+        // A refused confirmation used to be swallowed here, which on a
+        // sheet means the swipe simply does nothing - the one outcome a
+        // money control must never have. The server is still the truth
+        // about what was saved; this only says why it said no.
+        setDraftError(error?.message ?? 'Gagal menyimpan. Coba lagi, atau cek saldo kantongnya.');
       } finally {
         busyDrafts.current.delete(card.draftId);
         await reload();
@@ -538,6 +546,7 @@ export function ChatView() {
       dismissed.current.add(pendingCard.draftId);
     }
 
+    setDraftError(null);
     setSheetDraftId(null);
   }, [pendingCard]);
 
@@ -616,6 +625,7 @@ export function ChatView() {
         names={accountNames}
         accounts={accounts}
         saving={draftBusy}
+        error={draftError}
         open={Boolean(pendingCard) && sheetDraftId === pendingCard?.draftId}
         onClose={closeSheet}
         onRevise={handleRevise}
