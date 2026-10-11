@@ -130,6 +130,14 @@ export function ChatView() {
   const [walletCount, setWalletCount] = useState(null);
   const [freeToSpend, setFreeToSpend] = useState(null);
   const [prefill, setPrefill] = useState(null);
+  //: Bumped whenever the ledger may have moved — i.e. after a completed
+  //: turn or a decided draft. The wallet list and the free-to-spend
+  //: chip watch this instead of `messages`: `messages` changes on every
+  //: streamed token, so keying off it meant a full /accounts and
+  //: /summary round trip *per token*. A couple of hundred tokens was a
+  //: couple of hundred pairs of requests, which on a phone was enough
+  //: to get the browser's renderer killed mid-reply.
+  const [ledgerVersion, setLedgerVersion] = useState(0);
   //: Which draft the sheet is showing. Null means closed - including
   //: while a draft is still pending, because dismissing a sheet must
   //: not decide anything.
@@ -199,6 +207,11 @@ export function ChatView() {
       const rows = await chatApi.messages(openThread.current);
       setMessages(rows.length ? toThread(rows) : [WELCOME]);
       setStatus('');
+      // The ledger can only have moved when a turn has finished or a
+      // draft was decided, and both end here. The wallet list and the
+      // free-to-spend chip key off this rather than off `messages`,
+      // which changes on every streamed token.
+      setLedgerVersion((version) => version + 1);
     } catch (error) {
       if (error instanceof ApiError && error.isUnauthorized) {
         setStatus('Belum masuk');
@@ -261,7 +274,7 @@ export function ChatView() {
         setWalletCount(rows.length);
       })
       .catch(() => {});
-  }, [messages]);
+  }, [ledgerVersion]);
 
   // The one number the whole app exists to produce, kept in view while
   // you type. Re-read after every turn because a confirmed draft moves
@@ -284,7 +297,7 @@ export function ChatView() {
         setFreeToSpend(null);
       })
       .catch(() => setFreeToSpend(null));
-  }, [messages]);
+  }, [ledgerVersion]);
 
   const handleSend = useCallback(
     async (body) => {
