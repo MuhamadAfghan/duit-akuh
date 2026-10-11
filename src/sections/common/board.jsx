@@ -371,8 +371,17 @@ export function Bar({ value, tone = 'good', height = 10 }) {
 export function Ring({ percent, tone = 'good', size = 64 }) {
   const colours = { good: '#009A5B', warn: '#C79000', muted: '#8A9298' };
   const radius = 26;
+  const stroke = 8;
   const circumference = 2 * Math.PI * radius;
   const filled = (Math.min(Math.max(percent, 0), 100) / 100) * circumference;
+
+  // A round cap adds half the stroke width beyond each end, so an arc
+  // drawn at its true length renders one stroke longer than it should.
+  // At 33% nobody notices; at 9% the ring reads as a blob twice the
+  // progress it means. Draw the dash short by that overhang, and give
+  // up the caps entirely once there is nothing left to trim.
+  const capped = filled > stroke;
+  const dash = capped ? filled - stroke : filled;
 
   return (
     <Box
@@ -384,18 +393,20 @@ export function Ring({ percent, tone = 'good', size = 64 }) {
       aria-label={`Terkumpul ${percent} persen`}
       sx={{ flexShrink: 0 }}
     >
-      <circle cx="32" cy="32" r={radius} fill="none" stroke="#EEEFF0" strokeWidth="8" />
-      <circle
-        cx="32"
-        cy="32"
-        r={radius}
-        fill="none"
-        stroke={colours[tone] ?? colours.good}
-        strokeWidth="8"
-        strokeLinecap="round"
-        strokeDasharray={`${filled} ${circumference}`}
-        transform="rotate(-90 32 32)"
-      />
+      <circle cx="32" cy="32" r={radius} fill="none" stroke="#EEEFF0" strokeWidth={stroke} />
+      {filled > 0 && (
+        <circle
+          cx="32"
+          cy="32"
+          r={radius}
+          fill="none"
+          stroke={colours[tone] ?? colours.good}
+          strokeWidth={stroke}
+          strokeLinecap={capped ? 'round' : 'butt'}
+          strokeDasharray={`${dash} ${circumference}`}
+          transform="rotate(-90 32 32)"
+        />
+      )}
       <text x="32" y="37" textAnchor="middle" fontSize="16" fontWeight="800" fill="#0B0D0E">
         {percent}%
       </text>

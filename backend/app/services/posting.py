@@ -37,6 +37,7 @@ from ..models import (
     TransactionType,
     new_uuid,
 )
+from ..money import format_rupiah
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +248,6 @@ def _reject_overdraft(
 
         if current + delta < 0:
             raise InsufficientBalance(
-                f"Saldo '{account.name}' akan menjadi {current + delta}. "
+                f"Saldo '{account.name}' akan menjadi {format_rupiah(current + delta)}. "
                 "Konfirmasi eksplisit diperlukan untuk saldo negatif."
             )
