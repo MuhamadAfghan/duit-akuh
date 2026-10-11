@@ -224,6 +224,12 @@ export function ChatView() {
         return;
       }
       setStatus('Tidak tersambung');
+    } finally {
+      // Even a refused load is an answer: the thread shows what it has
+      // and the header says why. A skeleton that never resolves is a
+      // worse lie than an empty thread, because it claims the data is
+      // still coming.
+      setReady(true);
     }
   }, []);
 
