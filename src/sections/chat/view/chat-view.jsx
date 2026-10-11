@@ -416,6 +416,9 @@ export function ChatView() {
         // they are not collapsed into one "failed" message.
         const BY_CODE = {
           offline: 'Tidak ada koneksi. Pesan belum terkirim dan tidak ada yang tersimpan.',
+          blocked_by_edge:
+            'Permintaan ditahan sama proteksi hosting sebelum sampai ke aplikasi. ' +
+            'Pesan lu belum terkirim. Coba lagi sebentar.',
           ai_rate_limited:
             'Terlalu banyak pesan dalam waktu singkat. Tunggu sebentar, lalu coba lagi.',
           ai_busy:

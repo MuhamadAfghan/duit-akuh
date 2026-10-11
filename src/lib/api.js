@@ -64,7 +64,28 @@ function extractError(status, body) {
   return { code: 'error', message: `Permintaan gagal (${status})` };
 }
 
-async function request(path, { method = 'GET', body, headers = {}, signal } = {}) {
+/**
+ * True when the host's protection answered instead of our API.
+ *
+ * Imunify360 sits in front of this account (`server: openresty`) and
+ * answers requests it finds suspicious with a JavaScript challenge
+ * page — **status 200**, `content-type: text/html`, "One moment,
+ * please...". Our own XHR gets it too, intermittently and more often
+ * on mobile.
+ *
+ * Reported as "Balasan server kosong", which is how it stayed
+ * unexplained for a while: the response is not empty, it is 12KB of
+ * HTML that is not JSON. Calling it by its name is most of the fix,
+ * because the rest of the fix is a hosting setting and nobody looks
+ * there while the app is blaming itself.
+ */
+function isEdgeChallenge(response, text) {
+  const type = response.headers.get('content-type') ?? '';
+
+  return type.includes('text/html') && /<title[^>]*>\s*One moment/i.test(text);
+}
+
+async function request(path, { method = 'GET', body, headers = {}, signal, retried } = {}) {
   let response;
 
   try {
@@ -76,6 +97,13 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
       credentials: 'same-origin',
       headers: {
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        // Says plainly that this is an API call and not a page load.
+        // It does not stop the WAF on its own, but it is what a filter
+        // rule can be written against, and it keeps the backend from
+        // redirecting us to the sign-in page the way it now does for a
+        // browser navigation.
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
         ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -111,23 +139,38 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
     throw new ApiError(message, { status: response.status, code, body: payload });
   }
 
-  // A 200 with nothing in it is a broken response, not an empty result.
-  // It happens here for real: a reply truncated in transit still arrives
-  // as 200 with zero bytes — the access log is full of them on mobile.
+  // Returning `null` for any of this was the bug behind "This page
+  // couldn't load": `setAccounts(null)` followed by `accounts.map(...)`
+  // inside a useMemo throws during render, React unwinds the whole
+  // tree, and the browser shows its own error page. Callers already
+  // handle a failed request; none can do anything with a silent null.
   //
-  // Returning `null` for it was the bug behind "This page couldn't
-  // load": `setAccounts(null)` followed by `accounts.map(...)` inside a
-  // useMemo throws during render, React unwinds the whole tree, and the
-  // browser shows its own error page. Callers already handle a failed
-  // request; none of them can do anything sensible with a silent null.
-  //
-  // 204 has returned above, so a deliberate no-content reply is not
-  // affected.
+  // 204 has returned above, so a deliberate no-content reply is fine.
   if (payload === null) {
-    throw new ApiError('Balasan server kosong. Coba lagi.', {
-      status: response.status,
-      code: 'empty_response',
-    });
+    if (isEdgeChallenge(response, text)) {
+      // The challenge usually passes on a second attempt, so one retry
+      // turns most of these into nothing the person ever sees. GET
+      // only: replaying a write that may already have landed is
+      // exactly what the idempotency rules exist to prevent, and a
+      // challenge gives no way to know which side of it we are on.
+      if (method === 'GET' && !retried) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+
+        return request(path, { method, body, headers, signal, retried: true });
+      }
+
+      throw new ApiError(
+        'Permintaan ditahan sama proteksi hosting, bukan sama aplikasinya. Coba lagi sebentar.',
+        { status: response.status, code: 'blocked_by_edge' }
+      );
+    }
+
+    throw new ApiError(
+      text
+        ? 'Balasan server nggak bisa dibaca. Coba lagi.'
+        : 'Server nggak balas apa-apa. Coba lagi.',
+      { status: response.status, code: text ? 'bad_response' : 'empty_response' }
+    );
   }
 
   return payload;
@@ -304,6 +347,20 @@ export async function streamChat(
     }
     const { code, message } = extractError(response.status, payload);
     throw new ApiError(message, { status: response.status, code, body: payload });
+  }
+
+  // A 200 that is not our stream: the host's protection answering
+  // instead of the app. Without this the reader would hand JSON.parse a
+  // line of HTML and the turn would die on a syntax error.
+  if (!(response.headers.get('content-type') ?? '').includes('json')) {
+    const preview = await response.text();
+
+    if (isEdgeChallenge(response, preview)) {
+      throw new ApiError(
+        'Permintaan ditahan sama proteksi hosting, bukan sama aplikasinya. Coba lagi sebentar.',
+        { status: response.status, code: 'blocked_by_edge' }
+      );
+    }
   }
 
   const reader = response.body.getReader();

@@ -21,6 +21,11 @@ import { Iconify } from 'src/components/iconify';
  */
 export function ConnectionError({ error, onRetry, sx }) {
   const offline = error?.isOffline;
+  // Imunify360 sits in front of this hosting account and answers
+  // requests it finds suspicious with a 200 and an HTML challenge page.
+  // It is not a connection problem and not the app's doing, and saying
+  // "nggak bisa nyambung" sends people to check their signal.
+  const blocked = error?.code === 'blocked_by_edge';
 
   return (
     <Box
@@ -54,17 +59,22 @@ export function ConnectionError({ error, onRetry, sx }) {
       </Box>
 
       <Stack sx={{ gap: 1, maxWidth: 360 }}>
-        <Typography variant="h6">Nggak bisa nyambung ke server</Typography>
+        <Typography variant="h6">
+          {blocked ? 'Permintaan ditahan sebelum sampai' : 'Nggak bisa nyambung ke server'}
+        </Typography>
 
         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-          {offline
-            ? 'Permintaan ke server gagal sebelum sempat terkirim. Biasanya koneksi putus, atau ada ekstensi browser yang memblokir alamatnya.'
-            : 'Server menjawab dengan cara yang nggak kebaca. Coba lagi sebentar.'}
+          {blocked
+            ? 'Proteksi hosting nahan permintaannya di depan, jadi aplikasinya nggak pernah kebagian. Datanya aman — yang gagal cuma pengambilannya.'
+            : offline
+              ? 'Permintaan ke server gagal sebelum sempat terkirim. Biasanya koneksi putus, atau ada ekstensi browser yang memblokir alamatnya.'
+              : 'Server menjawab dengan cara yang nggak kebaca. Coba lagi sebentar.'}
         </Typography>
 
         <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-          Kalau diulang masih sama, buka di jendela samaran atau matikan pemblokir iklan buat alamat
-          ini.
+          {blocked
+            ? 'Biasanya lewat sendiri kalau dicoba lagi. Kalau sering, setelan Imunify360 di hosting perlu dilonggarin buat alamat ini.'
+            : 'Kalau diulang masih sama, buka di jendela samaran atau matikan pemblokir iklan buat alamat ini.'}
         </Typography>
       </Stack>
 
