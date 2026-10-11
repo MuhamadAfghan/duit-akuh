@@ -31,7 +31,17 @@ def upgrade() -> None:
             "conversations",
             sa.Column(column, sa.Boolean(), nullable=False, server_default=sa.false()),
         )
-        op.alter_column("conversations", column, server_default=None)
+        # `existing_type` and `existing_nullable` are not optional on
+        # MySQL: ALTER there rewrites the whole column definition, so
+        # alembic has to be told what the rest of it is or it emits a
+        # statement that drops the NOT NULL along with the default.
+        op.alter_column(
+            "conversations",
+            column,
+            existing_type=sa.Boolean(),
+            existing_nullable=False,
+            server_default=None,
+        )
 
     # The constraint that said one thread per user. Dropping it is the
     # whole migration; everything above is what replaces the structure
