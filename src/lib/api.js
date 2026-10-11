@@ -111,6 +111,25 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
     throw new ApiError(message, { status: response.status, code, body: payload });
   }
 
+  // A 200 with nothing in it is a broken response, not an empty result.
+  // It happens here for real: a reply truncated in transit still arrives
+  // as 200 with zero bytes — the access log is full of them on mobile.
+  //
+  // Returning `null` for it was the bug behind "This page couldn't
+  // load": `setAccounts(null)` followed by `accounts.map(...)` inside a
+  // useMemo throws during render, React unwinds the whole tree, and the
+  // browser shows its own error page. Callers already handle a failed
+  // request; none of them can do anything sensible with a silent null.
+  //
+  // 204 has returned above, so a deliberate no-content reply is not
+  // affected.
+  if (payload === null) {
+    throw new ApiError('Balasan server kosong. Coba lagi.', {
+      status: response.status,
+      code: 'empty_response',
+    });
+  }
+
   return payload;
 }
 

@@ -270,8 +270,14 @@ export function ChatView() {
     accountsApi
       .list()
       .then((rows) => {
-        setAccounts(rows);
-        setWalletCount(rows.length);
+        // Belt and braces alongside the empty-response check in
+        // src/lib/api.js: whatever arrives, `accounts` stays an array.
+        // A wallet list that is briefly wrong degrades a card label;
+        // one that is `null` used to take the whole screen down.
+        const list = Array.isArray(rows) ? rows : [];
+
+        setAccounts(list);
+        setWalletCount(list.length);
       })
       .catch(() => {});
   }, [ledgerVersion]);
@@ -560,8 +566,15 @@ export function ChatView() {
     [sheetDraftId, reload]
   );
 
+  // Rendering must not be able to throw on a malformed wallet list. This
+  // exact line was the crash: `accounts.map` on a null, inside a useMemo,
+  // which React cannot recover from — the tree unwinds and the browser
+  // shows its own error page instead of the app.
   const accountNames = useMemo(
-    () => Object.fromEntries(accounts.map((account) => [account.id, account.name])),
+    () =>
+      Object.fromEntries(
+        (Array.isArray(accounts) ? accounts : []).map((account) => [account.id, account.name])
+      ),
     [accounts]
   );
 
