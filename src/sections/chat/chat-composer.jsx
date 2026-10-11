@@ -47,7 +47,13 @@ function writeDraft(value) {
 
 // ----------------------------------------------------------------------
 
-export function ChatComposer({ onSend, disabled = false }) {
+export function ChatComposer({
+  onSend,
+  disabled = false,
+  suggestions = SUGGESTIONS,
+  placeholder = 'Tulis atau tanya…',
+  prefill = null,
+}) {
   const inputRef = useRef(null);
   const [value, setValue] = useState('');
 
@@ -60,6 +66,23 @@ export function ChatComposer({ onSend, disabled = false }) {
       setValue(saved);
     }
   }, []);
+
+  /**
+   * Text handed over from elsewhere — a wallet chip in the first-run
+   * thread, for instance. `prefill.at` is a timestamp rather than a
+   * flag so picking the same chip twice still lands.
+   */
+  useEffect(() => {
+    if (!prefill?.text) {
+      return;
+    }
+
+    const next = `${prefill.text} `;
+
+    setValue(next);
+    writeDraft(next);
+    inputRef.current?.focus();
+  }, [prefill?.text, prefill?.at]);
 
   const handleChange = useCallback((event) => {
     setValue(event.target.value);
@@ -95,8 +118,11 @@ export function ChatComposer({ onSend, disabled = false }) {
     <Box sx={{ flexShrink: 0 }}>
       {/* Conversation starters. A chat-first app has to say what it can
           be asked, or the empty box is the hardest part of it. */}
-      <Stack direction="row" sx={{ px: 2, pb: 1, gap: 1, overflowX: 'auto' }}>
-        {SUGGESTIONS.map((text) => (
+      <Stack
+        direction="row"
+        sx={{ px: 2, pb: suggestions.length ? 1 : 0, gap: 1, overflowX: 'auto' }}
+      >
+        {suggestions.map((text) => (
           <Box
             key={text}
             component="button"
@@ -143,7 +169,7 @@ export function ChatComposer({ onSend, disabled = false }) {
             inputRef={inputRef}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder="Tulis atau tanya…"
+            placeholder={placeholder}
             inputProps={{ 'aria-label': 'Tulis pesan', enterKeyHint: 'send' }}
             sx={{
               flex: '1 1 auto',

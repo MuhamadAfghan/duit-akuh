@@ -20,7 +20,7 @@ import { CONFIG } from 'src/global-config';
  * in view while you type is what stops the chat being a place you go to
  * ask a question you already had to leave to answer.
  */
-export function ChatHeader({ status, freeToSpend }) {
+export function ChatHeader({ status, freeToSpend, hint }) {
   return (
     <Box
       component="header"
@@ -48,6 +48,24 @@ export function ChatHeader({ status, freeToSpend }) {
           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
             {status}
           </Typography>
+        ) : hint ? (
+          // Before the first wallet exists, "bebas pakai Rp0" is true and
+          // useless. Say what is missing instead.
+          <Box
+            sx={{
+              px: 1.5,
+              height: 32,
+              display: 'flex',
+              fontSize: 12,
+              fontWeight: 800,
+              alignItems: 'center',
+              borderRadius: 999,
+              color: 'text.secondary',
+              bgcolor: 'grey.100',
+            }}
+          >
+            {hint}
+          </Box>
         ) : (
           freeToSpend != null && (
             <Stack
