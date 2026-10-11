@@ -235,14 +235,30 @@ export function RowDivider() {
 /**
  * One row: avatar, name over a note, and a figure on the right.
  * `href` makes the whole row the tap target rather than a link inside it.
+ *
+ * `external` swaps the router link for a plain anchor. A file download
+ * is not a route: handing /srv/export/transactions.csv to the router
+ * means a client navigation to something that answers with a
+ * Content-Disposition header, so the browser has to do it.
  */
-export function ListRow({ avatar, title, note, value, valueTone, href, onClick, action }) {
+export function ListRow({
+  avatar,
+  title,
+  note,
+  value,
+  valueTone,
+  href,
+  external,
+  onClick,
+  action,
+}) {
   const interactive = Boolean(href || onClick);
+  const linkProps = href ? { href, component: external ? 'a' : RouterLink } : {};
 
   return (
     <Stack
       direction="row"
-      {...(href ? { component: RouterLink, href } : {})}
+      {...linkProps}
       {...(onClick ? { component: 'button', type: 'button', onClick } : {})}
       sx={{
         px: 2,

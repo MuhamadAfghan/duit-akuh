@@ -34,7 +34,7 @@ keys live only on the backend (AC21).
 | CSV export                                   | Built                                                         |
 | PWA shell, eight surfaces                    | Built, installable                                            |
 | Indonesian benchmark                         | 90.3% accuracy, p95 6.50s — both pilot gates pass             |
-| Voice, receipt OCR                           | Stage 2. The adapter has the interface, nothing implements it |
+| Voice, receipt OCR                           | Stage 2. `AiAdapter` has `chat` only — no `vision`, no `transcribe` |
 | Charts                                       | Not installed (see "Reference template")                      |
 | Deposit schedules                            | Goals have a target date but no deposit dates                 |
 | Physical device testing (AC15–AC18)          | Not done                                                      |

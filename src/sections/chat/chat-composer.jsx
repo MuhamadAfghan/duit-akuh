@@ -7,11 +7,11 @@ import Stack from '@mui/material/Stack';
 import InputBase from '@mui/material/InputBase';
 import IconButton from '@mui/material/IconButton';
 
+import { CHAT_DRAFT_KEY } from 'src/lib/session-state';
+
 import { Iconify } from 'src/components/iconify';
 
 // ----------------------------------------------------------------------
-
-const DRAFT_STORAGE_KEY = 'chat-composer-draft';
 
 /** Sent as-is when tapped, so a first-time user has somewhere to start. */
 const SUGGESTIONS = ['Saldo semua kantong', 'Sisa budget bulan ini', 'Uang bebas pakai berapa?'];
@@ -21,13 +21,14 @@ const SUGGESTIONS = ['Saldo semua kantong', 'Sisa budget bulan ini', 'Uang bebas
  *
  * The PRD is explicit that moving to another screen or opening a detail
  * panel must not lose a draft. sessionStorage is the right scope: it
- * survives tab switches and remounts, stays on this device, and goes away
- * with the session. Every access is guarded because it throws in some
- * private-browsing modes.
+ * survives tab switches and remounts, and stays on this device. It does
+ * not expire with the account, though, so signing out clears it by hand
+ * — see src/lib/session-state.js. Every access is guarded because it
+ * throws in some private-browsing modes.
  */
 function readDraft() {
   try {
-    return sessionStorage.getItem(DRAFT_STORAGE_KEY) ?? '';
+    return sessionStorage.getItem(CHAT_DRAFT_KEY) ?? '';
   } catch {
     return '';
   }
@@ -36,9 +37,9 @@ function readDraft() {
 function writeDraft(value) {
   try {
     if (value) {
-      sessionStorage.setItem(DRAFT_STORAGE_KEY, value);
+      sessionStorage.setItem(CHAT_DRAFT_KEY, value);
     } else {
-      sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+      sessionStorage.removeItem(CHAT_DRAFT_KEY);
     }
   } catch {
     // Not fatal: the draft simply will not survive a remount.

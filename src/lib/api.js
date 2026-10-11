@@ -139,6 +139,17 @@ export const authApi = {
    */
   forgotPassword: (email) => api.post('/auth/forgot-password', { email }),
 
+  /**
+   * Succeeds with 204 and no body. The backend revokes every session
+   * including this one, so the caller is signed out by the time this
+   * resolves and has to send the user back to sign-in.
+   */
+  changePassword: (currentPassword, newPassword) =>
+    api.post('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+
   resetPassword: (token, newPassword) =>
     api.post('/auth/reset-password', { token, new_password: newPassword }),
 };

@@ -12,6 +12,13 @@ import { paths } from 'src/routes/paths';
  * primary surface (FR14); the rest are companion views over the same
  * data, and every one of them can also be driven from the chat.
  *
+ * Saya took the slot Data used to hold. A signed-in app needs a way
+ * out of itself, and for a while this one had none: the only sign-out
+ * button lived in the template's dead /dashboard layout, so switching
+ * accounts on a shared phone meant clearing a cookie by hand. Data did
+ * not lose anything by moving — it is a tile in Ringkasan's menu, and
+ * the same history is in the chat.
+ *
  * Budget, Target and Simulasi deliberately stay off the bar. Five tabs
  * is where a bottom bar stops being scannable, and those three are
  * things you visit, not things you live in. They are one tap from
@@ -38,8 +45,8 @@ export const appTabs = [
     icon: 'lega:wallet',
   },
   {
-    label: 'Data',
-    path: paths.data,
-    icon: 'lega:list',
+    label: 'Saya',
+    path: paths.saya,
+    icon: 'lega:user',
   },
 ];

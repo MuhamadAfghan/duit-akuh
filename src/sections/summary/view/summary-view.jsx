@@ -236,13 +236,10 @@ function MenuGrid({ budgets, goals }) {
       alert: behind > 0,
     },
     { href: paths.simulasi, icon: 'lega:calculator', label: 'Simulasi', hint: 'Nabung & deposito' },
-    {
-      href: '/srv/export/transactions.csv?period=semua',
-      icon: 'lega:download',
-      label: 'Ekspor CSV',
-      hint: 'Ikut filter aktif',
-      external: true,
-    },
+    // Data left the tab bar when Saya took its slot. It keeps its own
+    // CSV button in its header, so the export did not move house — it
+    // is one tap further in, next to the filters it exports with.
+    { href: paths.data, icon: 'lega:list', label: 'Data', hint: 'Riwayat & ekspor CSV' },
   ];
 
   return (

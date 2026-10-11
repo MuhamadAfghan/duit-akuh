@@ -753,4 +753,13 @@ export default {
   'lega:search': {
     body: '<circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2.1"/><path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" d="M20 20l-3.5-3.5"/>',
   },
+  'lega:user': {
+    body: '<circle cx="12" cy="8" r="3.6" fill="none" stroke="currentColor" stroke-width="2.1"/><path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" d="M4.8 19.5a7.2 7.2 0 0 1 14.4 0"/>',
+  },
+  'lega:shield': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round" d="M12 3.2l6.8 2.6v5.4c0 4.2-2.8 7.6-6.8 9.1-4-1.5-6.8-4.9-6.8-9.1V5.8z"/><path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" d="M9.2 12.1l2 2 3.6-3.9"/>',
+  },
+  'lega:logout': {
+    body: '<path fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" d="M14.5 4.5h2.8A2.2 2.2 0 0 1 19.5 6.7v10.6a2.2 2.2 0 0 1-2.2 2.2h-2.8M10 8l-4 4 4 4M6.4 12h8.1"/>',
+  },
 };
