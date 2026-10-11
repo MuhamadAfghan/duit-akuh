@@ -178,7 +178,11 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                 "default untuk pesan yang menceritakan belanja, pemasukan atau "
                 "transfer, termasuk ketika kategori disebut ('makan 35rb'). "
                 "TIDAK menyimpan apa pun; pengguna harus mengonfirmasi. "
-                "Jika nama kantong ambigu atau tidak disebut, tanyakan dulu, jangan menebak."
+                "Jika HANYA ADA SATU transaksi dan kantongnya ambigu atau tidak "
+                "disebut, tanyakan dulu, jangan menebak. Kalau transaksinya "
+                "BEBERAPA, kosongkan saja from_account/to_account yang tidak "
+                "disebut - penggunanya yang memilih di kartu konfirmasi, dan "
+                "bertanya akan membuang rincian lain yang sudah benar."
             ),
             "parameters": {
                 "type": "object",
@@ -234,7 +238,19 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                             },
                             "required": ["type", "amount"],
                         },
-                    }
+                    },
+                    "stated_total": {
+                        "type": "integer",
+                        "description": (
+                            "Isi HANYA kalau pengguna menyebut total keseluruhan di "
+                            "samping rinciannya, misal 'ngeluarin 150rb: obat 50rb, "
+                            "makan 70rb, minum 30rb' -> stated_total 150000. "
+                            "JANGAN pernah memasukkan angka total itu sebagai "
+                            "transaksi tambahan di 'transactions'; itu bikin "
+                            "pengeluarannya kehitung dua kali. Backend yang "
+                            "mencocokkan total dengan rinciannya."
+                        ),
+                    },
                 },
                 "required": ["transactions"],
             },

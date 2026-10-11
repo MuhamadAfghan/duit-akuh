@@ -2,6 +2,9 @@
 
 import Box from '@mui/material/Box';
 
+import { paths } from 'src/routes/paths';
+import { usePathname } from 'src/routes/hooks';
+
 import { useVirtualKeyboard } from 'src/hooks';
 
 import { BottomTabs } from './bottom-tabs';
@@ -21,7 +24,19 @@ import { BottomTabs } from './bottom-tabs';
  * not optimised for.
  */
 export function AppShell({ children }) {
+  const pathname = usePathname();
   const { keyboardInset, isKeyboardOpen } = useVirtualKeyboard();
+
+  /**
+   * The chat gets the whole column.
+   *
+   * It is the only surface with a composer, so it is the only one where
+   * a floating bar competes with the keyboard for the bottom of the
+   * screen — and the only one whose content is a conversation you scroll
+   * rather than a page you read. It carries its own menu in the header
+   * instead (`AppMenuButton`). Every other surface keeps the bar.
+   */
+  const showTabs = pathname !== paths.chat;
 
   return (
     <Box
@@ -67,7 +82,7 @@ export function AppShell({ children }) {
           {children}
         </Box>
 
-        <BottomTabs hidden={isKeyboardOpen} />
+        {showTabs && <BottomTabs hidden={isKeyboardOpen} />}
       </Box>
     </Box>
   );

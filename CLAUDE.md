@@ -8,7 +8,7 @@ Web pencatatan keuangan pribadi berbasis AI, for Indonesian users (IDR, Bahasa I
 
 Requirements: **`docs/PRD.md` (v1.3) is the source of truth.** It defines FR01–FR18 and AC01–AC22 — cite those IDs when implementing or testing. The `PRD_Keuangan_AI_Web_v1.docx` still at the repo root is the superseded **v1.1** and should not be read; v1.3 adds the AI service spec (section 13) and the PWA/mobile mandate (section 12).
 
-**The product is chat-first and mobile-first.** One persistent conversation is the main surface and must be able to start _and finish_ every feature in a release (FR14). The dashboard is a companion view over the same data, not the primary UI. A mobile-first **PWA is mandatory for MVP** (FR16); phone is the primary device, desktop merely supported. The shipped shell is a floating five-slot bar — Chat · Ringkasan · **+** · Kantong · Data — where the centre button is manual entry.
+**The product is chat-first and mobile-first.** The chat is the main surface and must be able to start _and finish_ every feature in a release (FR14). It is no longer a single thread: a user has named, pinnable, archivable conversations, and the server always resolves one so nobody has to pick before they can type. The dashboard is a companion view over the same data, not the primary UI. A mobile-first **PWA is mandatory for MVP** (FR16); phone is the primary device, desktop merely supported. The shipped shell is a floating five-slot bar — Chat · Ringkasan · **+** · Kantong · Saya — where the centre button is manual entry. The chat is the exception: it drops the bar and carries a menu button in its header instead.
 
 The product is called **lega**. The brand green is `#009A5B`, the
 typeface Plus Jakarta Sans, and the mark a spirit level — see
@@ -199,9 +199,33 @@ to `/target/`. That also means every in-app link is a **full document
 navigation**, not a client-side route change — worth knowing before
 assuming state survives a tab tap.
 
-The live navigation is `appTabs` in `src/layouts/app/nav-config-app.jsx`:
-five slots, the middle one a circular link to manual entry. The
-template's `nav-config-dashboard.jsx`, `nav-config-account.jsx` and
+Navigation is split by surface, on purpose.
+
+Everywhere **except the chat**, it is `appTabs` in
+`src/layouts/app/nav-config-app.jsx`: five slots, the middle one a
+circular link to manual entry. `AppShell` decides, with one line —
+`showTabs = pathname !== paths.chat`.
+
+**The chat** drops the bar and renders `AppMenuButton`
+(`src/layouts/app/app-menu.jsx`) in its header, driven by `appMenuTiles`.
+It is the one surface with a composer, so it is the one place a floating
+bar fights the keyboard for the bottom of the screen. Because the bar is
+not there to fall back on, the menu holds **all eight** destinations at
+the same depth rather than the bar's four — Budget, Target and Simulasi
+are one tap from the chat, where from Ringkasan they are two.
+
+Two consequences worth knowing. Sign-out is not in the menu: it lives in
+Saya behind a confirmation dialog, and a second copy would be a second
+thing to keep in step. And Budget is `solar:chart-square-outline`, in the
+menu *and* on Ringkasan's own tiles, because Ringkasan owns `lega:chart`
+in the tab bar and the two sat one above the other in the grid.
+
+Safe areas follow the same split: `BoardBody` leaves the home indicator to
+the tab bar's own margin, while the chat composer carries
+`env(safe-area-inset-bottom)` itself — inside its padding, so the paper
+runs to the screen edge instead of leaving a grey strip.
+
+The template's `nav-config-dashboard.jsx`, `nav-config-account.jsx` and
 `nav-config-workspace.jsx` drive the dead `/dashboard` segment only.
 
 ### Imports are lint-enforced in a non-obvious way
@@ -261,10 +285,81 @@ Built so far — the chat-first shell:
 - **Chat section** (`src/sections/chat/`): thread with
   sticky-bottom-only-when-already-at-bottom scrolling, composer whose
   draft survives navigation via `sessionStorage`, the board "Mulai"
-  first-run state when no wallet exists yet, and the in-chat
-  `ActionCard` → `DraftCard` confirm flow. `DraftCard` branches per
-  draft kind, because a goal, a budget and a reversal each need a
-  different sentence beside the number.
+  first-run state when no wallet exists yet, and the confirm flow
+  below. Every bubble carries its own time, formatted by
+  `src/utils/format-chat-time.js`, which is **pinned to Asia/Jakarta**
+  rather than the device zone — the ledger's day boundaries are
+  Jakarta's, and a bubble dated "besok" under a summary that counts it
+  today is the app contradicting itself.
+- **A pending draft opens in a sheet, not inline.** `DraftSheet`
+  (`sections/chat/cards/`) owns the bottom of the screen, so the
+  amount, the impact and the swipe are in view together and the editor
+  has somewhere to open; the thread keeps only a stub that reopens it,
+  because a confirmation must survive a stray swipe down without being
+  decided by one. A *settled* draft is still the full `ActionCard`
+  receipt in the thread. `DraftCard` branches per draft kind, because a
+  goal, a budget and a reversal each need a different sentence beside
+  the number.
+- **Several entries from one sentence.** "Ngeluarin 150rb — obat 50,
+  makan 70, minum 30" is three transactions and one *claim about them*.
+  `propose_transactions` takes `stated_total` **separately from
+  `transactions`**, and `app/domain/batch.py:reconcile` checks the
+  parts against it; the stated total is never posted, which is the
+  whole point — recorded alongside the parts it doubles the spending.
+  More than one entry (or any `stated_total`) becomes one `batch`
+  draft: one swipe, one `transactions.group_id`, all of it or none.
+  Each entry still gets **its own** idempotency key
+  (`<operation_id>:<index>`) — one shared key would make the second
+  entry look like a replay of the first and drop it.
+  In a batch an unresolvable wallet is left blank rather than raising,
+  because erroring would throw away the entries the model read
+  correctly; `_confirm_batch` then refuses the whole batch until every
+  slot is filled (AC04 on the server, not just a disabled button), and
+  the preview leaves unresolved entries out instead of inventing a row.
+- **A read tool's result can be drawn, not just narrated.**
+  `messages.view` (migration `e18a4b6c3d27`) holds `{kind, data}` taken
+  straight from the tool output, so the card and the sentence above it
+  cannot disagree and the model never restates a figure as a picture.
+  `DRAWABLE_TOOLS` in the orchestrator is the whole registry — adding a
+  card is one entry there plus a component. `SpendingCard` prints every
+  number on its own bar and says "lewat budget" in words as well as
+  amber, because FR18 forbids hover-only and colour-only charts; there
+  is deliberately no chart library, since apexcharts is not installed
+  and five labelled bars are five divs.
+- **Named threads** (`app/services/chat/sessions.py`, migration
+  `9a2e5d4c71b8`). `uq_conversation_per_user` is gone;
+  `active_conversation()` is what replaces it — newest unarchived, else
+  a new one — so FR14's "never have to choose a thread to begin" holds
+  without a constraint. Threads are ordered by `max(messages.seq)`
+  rather than a stored `last_message_at`: `seq` is already the ordering
+  key, so there is no second value to drift. A thread is titled from
+  its own first message, not by asking the model — a title is worth no
+  round trip, and the sentence a person typed is what they will
+  recognise. **There is no delete, deliberately:** archiving does the
+  list's job, while deleting a thread would destroy the only record of
+  *why* a transaction was entered, long after the transaction itself is
+  immovable. Quoting across threads is refused for the same reason
+  context is per thread (AC08 covers the rest).
+- **Reply quotes a turn, and the model is told.** `messages.reply_to_id`
+  (migration `3f1b7c0a94de`) is self-referential with `ON DELETE SET
+  NULL` — losing the quoted turn must not take the reply with it — and
+  `tests/conftest.py` nulls it before its bulk deletes for the same
+  MySQL reason as `transactions.reverses_id`. The API validates the id
+  against the sender before storing it and answers 404 otherwise (AC08),
+  *before* the stream opens, because a 404 raised mid-generator reaches
+  the client as a broken 200. `_as_prompt` prefixes the quoted text onto
+  the user turn, capped at 160 characters: without it the model cannot
+  tell which of ten earlier answers a short "yang itu" meant, and
+  uncapped it would spend the 24,576-token window re-sending its own
+  reply.
+- **"Ubah dulu" revises a draft through the backend**, not by asking
+  the model again: `POST /chat/drafts/{id}/revise` takes a field patch,
+  re-validates it and recomputes the impact with the same functions
+  that drew the first card. It returns a **different** draft — the old
+  one is cancelled — so a confirmation already in flight cannot land on
+  edited numbers. Only money kinds are revisable, and the allowlists in
+  `app/services/chat/revise.py` and `cards/draft-revise.jsx` are two
+  copies of one fact: the server's is the one that decides.
 - **`src/sections/common/board.jsx`** is the shared vocabulary every
   surface is assembled from — hero cards, stat tiles, list rows, the
   progress ring, the wallet picker, the keypad. When a board changes,

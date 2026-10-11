@@ -100,6 +100,10 @@ export function BoardBody({ children, sx }) {
           minHeight: 0,
           overflowY: 'auto',
           px: 2,
+          // No safe-area inset here: every surface that uses BoardBody
+          // still has the floating tab bar under it, and the bar carries
+          // its own `env(safe-area-inset-bottom)` margin. The chat is the
+          // exception, and its composer does this for itself.
           pb: 2,
           gap: 2,
           display: 'flex',
