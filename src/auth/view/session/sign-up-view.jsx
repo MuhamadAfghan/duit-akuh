@@ -7,24 +7,21 @@ import { useBoolean } from 'minimal-shared/hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 
 import Box from '@mui/material/Box';
-import Link from '@mui/material/Link';
-import Alert from '@mui/material/Alert';
-import Button from '@mui/material/Button';
+import Stack from '@mui/material/Stack';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 
 import { paths } from 'src/routes/paths';
 import { useRouter } from 'src/routes/hooks';
-import { RouterLink } from 'src/routes/components';
 
 import { Iconify } from 'src/components/iconify';
-import { Form, Field, schemaUtils } from 'src/components/hook-form';
+import { Form, schemaUtils } from 'src/components/hook-form';
 
+import { Rule } from '../../components/rule';
 import { useAuthContext } from '../../hooks';
 import { getErrorMessage } from '../../utils';
 import { signUp } from '../../context/session';
-import { FormHead } from '../../components/form-head';
-import { SignUpTerms } from '../../components/sign-up-terms';
+import { AuthHead, AuthNote, AuthField, AuthFooter, AuthSubmit } from '../../components/auth-kit';
 
 // ----------------------------------------------------------------------
 
@@ -33,8 +30,7 @@ export const SignUpSchema = z.object({
   password: z
     .string()
     .min(1, { message: 'Kata sandi wajib diisi' })
-    // Matches the backend's MIN_PASSWORD_LENGTH; a shorter one would be
-    // accepted here and then rejected by the server.
+    // Matches the backend's MIN_PASSWORD_LENGTH.
     .min(8, { message: 'Kata sandi minimal 8 karakter' }),
 });
 
@@ -49,17 +45,18 @@ export function SignUpView() {
 
   const [errorMessage, setErrorMessage] = useState(null);
 
-  const defaultValues = { email: '', password: '' };
-
   const methods = useForm({
     resolver: zodResolver(SignUpSchema),
-    defaultValues,
+    defaultValues: { email: '', password: '' },
   });
 
   const {
+    watch,
     handleSubmit,
     formState: { isSubmitting },
   } = methods;
+
+  const password = watch('password');
 
   const onSubmit = handleSubmit(async (data) => {
     try {
@@ -68,75 +65,84 @@ export function SignUpView() {
 
       router.refresh();
     } catch (error) {
-      console.error(error);
-      const feedbackMessage = getErrorMessage(error);
-      setErrorMessage(feedbackMessage);
+      setErrorMessage(getErrorMessage(error));
     }
   });
 
-  const renderForm = () => (
-    <Box sx={{ gap: 3, display: 'flex', flexDirection: 'column' }}>
-      <Field.Text name="email" label="Email" slotProps={{ inputLabel: { shrink: true } }} />
-
-      <Field.Text
-        name="password"
-        label="Kata sandi"
-        placeholder="Minimal 8 karakter"
-        type={showPassword.value ? 'text' : 'password'}
-        slotProps={{
-          inputLabel: { shrink: true },
-          input: {
-            endAdornment: (
-              <InputAdornment position="end">
-                <IconButton onClick={showPassword.onToggle} edge="end">
-                  <Iconify icon={showPassword.value ? 'solar:eye-bold' : 'solar:eye-closed-bold'} />
-                </IconButton>
-              </InputAdornment>
-            ),
-          },
-        }}
-      />
-
-      <Button
-        fullWidth
-        color="inherit"
-        size="large"
-        type="submit"
-        variant="contained"
-        loading={isSubmitting}
-        loadingIndicator="Bikin akun…"
-      >
-        Bikin akun
-      </Button>
-    </Box>
-  );
-
   return (
     <>
-      <FormHead
-        title="Bikin akun"
-        description={
-          <>
-            {`Udah punya akun? `}
-            <Link component={RouterLink} href={paths.auth.signIn} variant="subtitle2">
-              Masuk
-            </Link>
-          </>
-        }
-        sx={{ textAlign: { xs: 'center', md: 'left' } }}
-      />
+      <Box sx={{ flexGrow: 1 }}>
+        <AuthHead title="Bikin akun" description="Semenit doang, terus langsung bisa nyatet." />
 
-      {!!errorMessage && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {errorMessage}
-        </Alert>
-      )}
+        {!!errorMessage && (
+          <Box sx={{ mt: 2.5 }}>
+            <AuthNote tone="bad" icon="solar:danger-triangle-bold">
+              {errorMessage}
+            </AuthNote>
+          </Box>
+        )}
 
-      <Form methods={methods} onSubmit={onSubmit}>
-        {renderForm()}
-      </Form>
+        <Form methods={methods} onSubmit={onSubmit}>
+          <Stack sx={{ mt: 3, gap: 2 }}>
+            <AuthField name="email" label="EMAIL" type="email" />
 
-      <SignUpTerms />
+            <AuthField
+              name="password"
+              label="KATA SANDI"
+              type={showPassword.value ? 'text' : 'password'}
+              slotProps={{
+                input: {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        onClick={showPassword.onToggle}
+                        edge="end"
+                        aria-label={
+                          showPassword.value ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'
+                        }
+                      >
+                        <Iconify
+                          icon={showPassword.value ? 'solar:eye-bold' : 'solar:eye-closed-bold'}
+                        />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            />
+
+            {/* Live, under the field it describes. Rules that only appear
+                after a rejection are a quiz, not guidance. */}
+            <Stack sx={{ gap: 1 }}>
+              <Rule met={password.length >= 8} label="Minimal 8 karakter" />
+              <Rule met={/\d/.test(password)} label="Ada angkanya" />
+            </Stack>
+
+            <AuthSubmit loading={isSubmitting} loadingIndicator="Bikin akun…">
+              Bikin akun
+            </AuthSubmit>
+          </Stack>
+        </Form>
+
+        <Box sx={{ mt: 3 }}>
+          <AuthNote
+            tone="good"
+            icon="solar:shield-check-bold"
+            title="Catatan lu nggak ke mana-mana"
+          >
+            Teks, struk, dan suara diproses di server sendiri, bukan dikirim ke layanan AI pihak
+            ketiga. Kalau suatu saat pindah ke AI awan, lu bakal ditanya dulu.
+          </AuthNote>
+        </Box>
+
+        <Box
+          sx={{ mt: 2, fontSize: 12, lineHeight: 1.5, fontWeight: 600, color: 'text.secondary' }}
+        >
+          Akun diatur ke rupiah dan zona waktu Asia/Jakarta. Bisa diganti nanti.
+        </Box>
+      </Box>
+
+      <AuthFooter prompt="Udah punya akun?" label="Masuk" href={paths.auth.signIn} />
     </>
   );
 }

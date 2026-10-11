@@ -8,8 +8,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 
 import Box from '@mui/material/Box';
 import Link from '@mui/material/Link';
-import Alert from '@mui/material/Alert';
-import Button from '@mui/material/Button';
+import Stack from '@mui/material/Stack';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 
@@ -18,12 +17,12 @@ import { useRouter } from 'src/routes/hooks';
 import { RouterLink } from 'src/routes/components';
 
 import { Iconify } from 'src/components/iconify';
-import { Form, Field, schemaUtils } from 'src/components/hook-form';
+import { Form, schemaUtils } from 'src/components/hook-form';
 
 import { useAuthContext } from '../../hooks';
 import { getErrorMessage } from '../../utils';
-import { FormHead } from '../../components/form-head';
 import { signInWithPassword } from '../../context/session';
+import { AuthHead, AuthNote, AuthField, AuthFooter, AuthSubmit } from '../../components/auth-kit';
 
 // ----------------------------------------------------------------------
 
@@ -49,11 +48,9 @@ export function SignInView() {
 
   const [errorMessage, setErrorMessage] = useState(null);
 
-  const defaultValues = { email: '', password: '' };
-
   const methods = useForm({
     resolver: zodResolver(SignInSchema),
-    defaultValues,
+    defaultValues: { email: '', password: '' },
   });
 
   const {
@@ -68,87 +65,77 @@ export function SignInView() {
 
       router.refresh();
     } catch (error) {
-      console.error(error);
-      const feedbackMessage = getErrorMessage(error);
-      setErrorMessage(feedbackMessage);
+      setErrorMessage(getErrorMessage(error));
     }
   });
 
-  const renderForm = () => (
-    <Box sx={{ gap: 3, display: 'flex', flexDirection: 'column' }}>
-      <Field.Text name="email" label="Email" slotProps={{ inputLabel: { shrink: true } }} />
-
-      <Box sx={{ gap: 1.5, display: 'flex', flexDirection: 'column' }}>
-        <Link
-          component={RouterLink}
-          href={paths.auth.forgot}
-          variant="body2"
-          color="inherit"
-          sx={{ alignSelf: 'flex-end' }}
-        >
-          Lupa kata sandi?
-        </Link>
-
-        <Field.Text
-          name="password"
-          label="Kata sandi"
-          placeholder="Minimal 8 karakter"
-          type={showPassword.value ? 'text' : 'password'}
-          slotProps={{
-            inputLabel: { shrink: true },
-            input: {
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton onClick={showPassword.onToggle} edge="end">
-                    <Iconify
-                      icon={showPassword.value ? 'solar:eye-bold' : 'solar:eye-closed-bold'}
-                    />
-                  </IconButton>
-                </InputAdornment>
-              ),
-            },
-          }}
-        />
-      </Box>
-
-      <Button
-        fullWidth
-        color="inherit"
-        size="large"
-        type="submit"
-        variant="contained"
-        loading={isSubmitting}
-        loadingIndicator="Masuk…"
-      >
-        Masuk
-      </Button>
-    </Box>
-  );
-
   return (
     <>
-      <FormHead
-        title="Masuk"
-        description={
-          <>
-            {`Belum punya akun? `}
-            <Link component={RouterLink} href={paths.auth.signUp} variant="subtitle2">
-              Daftar
-            </Link>
-          </>
-        }
-        sx={{ textAlign: { xs: 'center', md: 'left' } }}
-      />
+      <Box sx={{ flexGrow: 1 }}>
+        <AuthHead mark title="Masuk" description="Lanjutin catatan keuangan lu." />
 
-      {!!errorMessage && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {errorMessage}
-        </Alert>
-      )}
+        {!!errorMessage && (
+          <Box sx={{ mt: 2.5 }}>
+            <AuthNote tone="bad" icon="solar:danger-triangle-bold">
+              {errorMessage}
+            </AuthNote>
+          </Box>
+        )}
 
-      <Form methods={methods} onSubmit={onSubmit}>
-        {renderForm()}
-      </Form>
+        <Form methods={methods} onSubmit={onSubmit}>
+          <Stack sx={{ mt: 3, gap: 2 }}>
+            <AuthField name="email" label="EMAIL" type="email" />
+
+            <AuthField
+              name="password"
+              label="KATA SANDI"
+              type={showPassword.value ? 'text' : 'password'}
+              slotProps={{
+                input: {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        onClick={showPassword.onToggle}
+                        edge="end"
+                        aria-label={
+                          showPassword.value ? 'Sembunyikan kata sandi' : 'Tampilkan kata sandi'
+                        }
+                      >
+                        <Iconify
+                          icon={showPassword.value ? 'solar:eye-bold' : 'solar:eye-closed-bold'}
+                        />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            />
+
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Link
+                component={RouterLink}
+                href={paths.auth.forgot}
+                sx={{ py: 1, fontSize: 14, fontWeight: 800, color: 'primary.dark' }}
+              >
+                Lupa kata sandi?
+              </Link>
+            </Box>
+
+            <AuthSubmit loading={isSubmitting} loadingIndicator="Masuk…">
+              Masuk
+            </AuthSubmit>
+          </Stack>
+        </Form>
+
+        <Box sx={{ mt: 3 }}>
+          <AuthNote icon="solar:shield-keyhole-bold-duotone">
+            Nggak ada masuk lewat Google atau Facebook. Akun lu cuma ada di server ini, dan sesinya
+            disimpan di cookie yang nggak bisa dibaca JavaScript.
+          </AuthNote>
+        </Box>
+      </Box>
+
+      <AuthFooter prompt="Belum punya akun?" label="Daftar" href={paths.auth.signUp} />
     </>
   );
 }
