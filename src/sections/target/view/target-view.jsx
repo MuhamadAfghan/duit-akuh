@@ -12,10 +12,10 @@ import Typography from '@mui/material/Typography';
 import LinearProgress from '@mui/material/LinearProgress';
 
 import { paths } from 'src/routes/paths';
-import { RouterLink } from 'src/routes/components';
 
 import { goalsApi, accountsApi } from 'src/lib/api';
 
+import { AllocateForm } from '../allocate-form';
 import {
   Pill,
   Ring,
@@ -106,7 +106,7 @@ export function TargetView() {
             )}
 
             {goals.map((goal) => (
-              <GoalCard key={goal.id} goal={goal} />
+              <GoalCard key={goal.id} goal={goal} onChanged={load} />
             ))}
 
             <Typography
@@ -123,8 +123,9 @@ export function TargetView() {
 
 // ----------------------------------------------------------------------
 
-function GoalCard({ goal }) {
+function GoalCard({ goal, onChanged }) {
   const [open, setOpen] = useState(false);
+  const [allocating, setAllocating] = useState(false);
   const [capacity, setCapacity] = useState('');
   const [plan, setPlan] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -233,8 +234,7 @@ function GoalCard({ goal }) {
         </Button>
         <Button
           fullWidth
-          component={RouterLink}
-          href={paths.chat}
+          onClick={() => setAllocating(true)}
           sx={{
             minHeight: 44,
             fontWeight: 800,
@@ -320,6 +320,16 @@ function GoalCard({ goal }) {
           )}
         </Box>
       </Collapse>
+
+      <AllocateForm
+        goal={goal}
+        open={allocating}
+        onClose={() => setAllocating(false)}
+        onSaved={() => {
+          setAllocating(false);
+          onChanged?.();
+        }}
+      />
     </Card>
   );
 }

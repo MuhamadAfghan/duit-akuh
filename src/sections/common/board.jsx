@@ -6,6 +6,7 @@ import Box from '@mui/material/Box';
 import Menu from '@mui/material/Menu';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
+import Button from '@mui/material/Button';
 import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -517,6 +518,200 @@ export function BoardNote({ children, tone = 'plain' }) {
       }}
     >
       {children}
+    </Box>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+/** The wallet colour each account type gets, everywhere it appears. */
+export const WALLET_TONES = {
+  bank: 'blue',
+  ewallet: 'green',
+  cash: 'amber',
+  credit_card: 'ink',
+};
+
+/**
+ * Up to three letters for an avatar: initials for a multi-word name,
+ * otherwise the first letters of the one word. "Bank Central Asia" is
+ * BCA; "Gopay" is GOP.
+ */
+export function walletInitials(name) {
+  const words = name.trim().split(/\s+/);
+
+  return (
+    words.length > 1
+      ? words
+          .slice(0, 3)
+          .map((word) => word[0])
+          .join('')
+      : name.slice(0, 3)
+  ).toUpperCase();
+}
+
+/**
+ * A horizontal row of wallets to choose from, the way the boards draw
+ * it: the avatar, a ring when chosen, the name under it.
+ *
+ * Scrolls sideways on purpose. A dropdown hides which wallets exist,
+ * and on a phone the whole point is seeing them.
+ */
+export function WalletPicker({ accounts, selectedId, onSelect, label }) {
+  return (
+    <Stack
+      direction="row"
+      role="group"
+      aria-label={label}
+      sx={{ gap: 1.75, overflowX: 'auto', pb: 0.5 }}
+    >
+      {accounts.map((account) => {
+        const active = account.id === selectedId;
+
+        return (
+          <Stack
+            key={account.id}
+            component="button"
+            type="button"
+            aria-pressed={active}
+            aria-label={account.name}
+            onClick={() => onSelect(account.id)}
+            sx={{
+              p: 0,
+              gap: 0.75,
+              width: 60,
+              border: 'none',
+              flexShrink: 0,
+              cursor: 'pointer',
+              alignItems: 'center',
+              bgcolor: 'transparent',
+            }}
+          >
+            <Box
+              aria-hidden
+              sx={{
+                borderRadius: '50%',
+                boxShadow: active ? '0 0 0 3px' : 'none',
+                color: 'primary.main',
+              }}
+            >
+              <RowAvatar tone={WALLET_TONES[account.type]}>
+                {walletInitials(account.name)}
+              </RowAvatar>
+            </Box>
+            <Box
+              component="span"
+              aria-hidden
+              sx={{
+                maxWidth: 1,
+                fontSize: 11,
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                textOverflow: 'ellipsis',
+                fontWeight: active ? 800 : 700,
+                color: active ? 'text.primary' : 'text.secondary',
+              }}
+            >
+              {account.name}
+            </Box>
+          </Stack>
+        );
+      })}
+    </Stack>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+/**
+ * Appends a keypad press to a digit string.
+ *
+ * Nine digits is a hundred million rupiah; past that it is a typo, so
+ * the string stops growing rather than silently accepting a figure
+ * nobody meant to type.
+ */
+export function pressDigit(current, key) {
+  if (key === 'back') {
+    return current.slice(0, -1);
+  }
+
+  return `${current}${key}`.replace(/^0+/, '').slice(0, 9);
+}
+
+/**
+ * The on-screen keypad from the Entri-Manual board.
+ *
+ * It exists instead of a number field because this is a phone: the
+ * native keyboard would cover the impact lines the person is supposed
+ * to read before committing, and `000` saves three taps on every
+ * rupiah figure.
+ */
+export function AmountKeypad({ onPress }) {
+  return (
+    <Box sx={{ gap: 0.75, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
+      {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((key) => (
+        <Key key={key} onClick={() => onPress(key)}>
+          {key}
+        </Key>
+      ))}
+      <Key muted onClick={() => onPress('000')}>
+        000
+      </Key>
+      <Key onClick={() => onPress('0')}>0</Key>
+      <Key muted label="Hapus satu angka" onClick={() => onPress('back')}>
+        <Iconify icon="mingcute:close-line" width={20} />
+      </Key>
+    </Box>
+  );
+}
+
+function Key({ children, onClick, muted, label }) {
+  return (
+    <Button
+      onClick={onClick}
+      aria-label={label}
+      sx={{
+        minHeight: 46,
+        fontSize: 20,
+        fontWeight: 700,
+        borderRadius: 1.5,
+        color: muted ? 'text.secondary' : 'text.primary',
+        bgcolor: muted ? 'transparent' : 'grey.100',
+        fontVariantNumeric: 'tabular-nums',
+      }}
+    >
+      {children}
+    </Button>
+  );
+}
+
+/**
+ * A tappable pill from the boards' preset and category rows. Pressed
+ * state is `aria-pressed`, not colour alone, because the boards' own
+ * rule is that nothing may be communicated by colour only.
+ */
+export function ChoiceChip({ label, active, onClick }) {
+  return (
+    <Box
+      component="button"
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      sx={{
+        px: 2,
+        flexShrink: 0,
+        minHeight: 40,
+        fontSize: 14,
+        cursor: 'pointer',
+        fontWeight: active ? 800 : 700,
+        borderRadius: 999,
+        border: active ? 'none' : '1.5px solid',
+        borderColor: 'grey.300',
+        color: active ? 'common.white' : 'text.primary',
+        bgcolor: active ? 'grey.800' : 'common.white',
+      }}
+    >
+      {label}
     </Box>
   );
 }

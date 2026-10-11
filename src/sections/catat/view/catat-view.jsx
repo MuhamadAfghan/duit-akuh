@@ -6,7 +6,6 @@ import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
 import Alert from '@mui/material/Alert';
-import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 
@@ -21,7 +20,7 @@ import { accountsApi, transactionsApi } from 'src/lib/api';
 import { Iconify } from 'src/components/iconify';
 import { SwipeConfirm } from 'src/components/swipe-confirm';
 
-import { BoardNote, RowAvatar } from '../../common';
+import { BoardNote, ChoiceChip, pressDigit, AmountKeypad, WalletPicker } from '../../common';
 
 // ----------------------------------------------------------------------
 
@@ -34,20 +33,6 @@ const MODES = [
 const PRESETS = [20000, 50000, 100000, 200000];
 
 const CATEGORIES = ['Makan', 'Transport', 'Belanja', 'Tagihan'];
-
-const TONES = { bank: 'blue', ewallet: 'green', cash: 'amber', credit_card: 'ink' };
-
-function initials(name) {
-  const words = name.trim().split(/\s+/);
-  return (
-    words.length > 1
-      ? words
-          .slice(0, 3)
-          .map((word) => word[0])
-          .join('')
-      : name.slice(0, 3)
-  ).toUpperCase();
-}
 
 /** A fresh key per attempt, so a double tap posts once (AC04). */
 function newOperationId() {
@@ -126,14 +111,7 @@ export function CatatView() {
 
   const press = useCallback((key) => {
     setError(null);
-    setDigits((current) => {
-      if (key === 'back') {
-        return current.slice(0, -1);
-      }
-      const next = `${current}${key}`.replace(/^0+/, '');
-      // Nine digits is a hundred million rupiah; past that it is a typo.
-      return next.slice(0, 9);
-    });
+    setDigits((current) => pressDigit(current, key));
   }, []);
 
   const save = async () => {
@@ -253,7 +231,7 @@ export function CatatView() {
 
           <Stack direction="row" sx={{ mt: 1.5, gap: 1, overflowX: 'auto', pb: 0.5 }}>
             {PRESETS.map((value) => (
-              <Chip
+              <ChoiceChip
                 key={value}
                 label={`${value / 1000}rb`}
                 onClick={() => setDigits(String(value))}
@@ -262,15 +240,21 @@ export function CatatView() {
           </Stack>
 
           <SectionCaps>{isTransfer ? 'DARI KANTONG' : 'KANTONG'}</SectionCaps>
-          <WalletPicker accounts={picker} selectedId={fromId} onSelect={setFromId} />
+          <WalletPicker
+            accounts={picker}
+            selectedId={fromId}
+            onSelect={setFromId}
+            label={isTransfer ? 'Dari kantong' : 'Kantong'}
+          />
 
           {isTransfer && (
             <>
               <SectionCaps>KE KANTONG</SectionCaps>
               <WalletPicker
-                accounts={picker.filter((account) => account.id !== fromId)}
+                label="Ke kantong"
                 selectedId={toId}
                 onSelect={setToId}
+                accounts={picker.filter((account) => account.id !== fromId)}
               />
               <Box sx={{ mt: 1.5 }}>
                 <BoardNote tone="info">
@@ -286,7 +270,7 @@ export function CatatView() {
               <SectionCaps>KATEGORI</SectionCaps>
               <Stack direction="row" sx={{ gap: 1, overflowX: 'auto', pb: 0.5 }}>
                 {CATEGORIES.map((name) => (
-                  <Chip
+                  <ChoiceChip
                     key={name}
                     label={name}
                     active={category === name}
@@ -335,20 +319,7 @@ export function CatatView() {
         </Box>
 
         <Box sx={{ flexShrink: 0, px: 2.5, pt: 1, pb: 2 }}>
-          <Box sx={{ gap: 0.75, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)' }}>
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((key) => (
-              <Key key={key} onClick={() => press(key)}>
-                {key}
-              </Key>
-            ))}
-            <Key muted onClick={() => press('000')}>
-              000
-            </Key>
-            <Key onClick={() => press('0')}>0</Key>
-            <Key muted onClick={() => press('back')} label="Hapus satu angka">
-              <Iconify icon="mingcute:close-line" width={20} />
-            </Key>
-          </Box>
+          <AmountKeypad onPress={press} />
 
           <Box sx={{ mt: 1.5 }}>
             <SwipeConfirm
@@ -392,105 +363,5 @@ function SectionCaps({ children }) {
     >
       {children}
     </Typography>
-  );
-}
-
-function Chip({ label, active, onClick }) {
-  return (
-    <Box
-      component="button"
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      sx={{
-        px: 2,
-        flexShrink: 0,
-        minHeight: 40,
-        fontSize: 14,
-        cursor: 'pointer',
-        fontWeight: active ? 800 : 700,
-        borderRadius: 999,
-        border: active ? 'none' : '1.5px solid',
-        borderColor: 'grey.300',
-        color: active ? 'common.white' : 'text.primary',
-        bgcolor: active ? 'grey.800' : 'common.white',
-      }}
-    >
-      {label}
-    </Box>
-  );
-}
-
-function WalletPicker({ accounts, selectedId, onSelect }) {
-  return (
-    <Stack direction="row" sx={{ gap: 1.75, overflowX: 'auto', pb: 0.5 }}>
-      {accounts.map((account) => {
-        const active = account.id === selectedId;
-
-        return (
-          <Stack
-            key={account.id}
-            component="button"
-            type="button"
-            aria-pressed={active}
-            onClick={() => onSelect(account.id)}
-            sx={{
-              p: 0,
-              gap: 0.75,
-              width: 60,
-              border: 'none',
-              flexShrink: 0,
-              cursor: 'pointer',
-              alignItems: 'center',
-              bgcolor: 'transparent',
-            }}
-          >
-            <Box
-              sx={{
-                borderRadius: '50%',
-                boxShadow: active ? '0 0 0 3px' : 'none',
-                color: 'primary.main',
-              }}
-            >
-              <RowAvatar tone={TONES[account.type]}>{initials(account.name)}</RowAvatar>
-            </Box>
-            <Box
-              component="span"
-              sx={{
-                maxWidth: 1,
-                fontSize: 11,
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                textOverflow: 'ellipsis',
-                fontWeight: active ? 800 : 700,
-                color: active ? 'text.primary' : 'text.secondary',
-              }}
-            >
-              {account.name}
-            </Box>
-          </Stack>
-        );
-      })}
-    </Stack>
-  );
-}
-
-function Key({ children, onClick, muted, label }) {
-  return (
-    <Button
-      onClick={onClick}
-      aria-label={label}
-      sx={{
-        minHeight: 46,
-        fontSize: 20,
-        fontWeight: 700,
-        borderRadius: 1.5,
-        color: muted ? 'text.secondary' : 'text.primary',
-        bgcolor: muted ? 'transparent' : 'grey.100',
-        fontVariantNumeric: 'tabular-nums',
-      }}
-    >
-      {children}
-    </Button>
   );
 }

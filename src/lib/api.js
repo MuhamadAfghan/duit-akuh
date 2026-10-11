@@ -158,6 +158,21 @@ export const goalsApi = {
    * more deposits, more up front, or more per period.
    */
   plan: (id, capacity) => api.get(`/goals/${id}/plan?capacity=${capacity}`),
+
+  /**
+   * Earmarks money that stays where it is. `amount` **replaces** this
+   * goal's mark on that account rather than adding to it, so sending
+   * the same request twice leaves the same figure.
+   *
+   * The server refuses to earmark more than an account actually holds
+   * (AC05), so the error from here is the rule talking, not a
+   * validation nicety.
+   */
+  allocate: (id, accountId, amount) =>
+    api.post(`/goals/${id}/allocations`, { account_id: accountId, amount }),
+
+  /** Drops the mark entirely. Zero is not a valid `allocate` amount. */
+  release: (id, accountId) => api.post(`/goals/${id}/allocations/release?account_id=${accountId}`),
 };
 
 export const budgetsApi = {
