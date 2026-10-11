@@ -14,7 +14,10 @@
  *   to trigger once it knows no draft is pending.
  */
 
-const VERSION = 'v1';
+// Bumped when the worker's own behaviour changes. `activate` deletes
+// every cache that is not the current one, so this is also how a cache
+// that has been accumulating across deploys gets cleared out.
+const VERSION = 'v2';
 const STATIC_CACHE = `static-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
 
@@ -35,9 +38,34 @@ const isStatic = (pathname) => STATIC_PREFIXES.some((prefix) => pathname.startsW
 const isNeverCached = (pathname) =>
   NEVER_CACHE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 
+/** The cached offline page, or a last-resort plain-text stand-in. */
+async function offlinePage() {
+  try {
+    const cache = await caches.open(STATIC_CACHE);
+    const offline = await cache.match(OFFLINE_URL);
+
+    if (offline) {
+      return offline;
+    }
+  } catch {
+    // Storage can be unavailable; fall through to the plain response.
+  }
+
+  return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+}
+
 self.addEventListener('install', (event) => {
+  // `addAll` is all-or-nothing: one blip on either file and the whole
+  // install fails, leaving the app with no offline page at all. Each is
+  // added on its own, and a failure is survivable.
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll([OFFLINE_URL, '/icons/icon-192.png']))
+    (async () => {
+      const cache = await caches.open(STATIC_CACHE);
+
+      await Promise.allSettled(
+        [OFFLINE_URL, '/icons/icon-192.png'].map((path) => cache.add(path))
+      );
+    })()
   );
 });
 
@@ -74,18 +102,24 @@ self.addEventListener('fetch', (event) => {
 
   // Navigations: always go to the network; fall back to a static offline
   // page. Never cache the response.
+  //
+  // Every in-app link here is a full document navigation (trailingSlash
+  // in next.config.mjs), so tapping around the app is a stream of fresh
+  // HTML requests. On a weak mobile connection one of them failing is
+  // routine, which is why it gets a second try before the offline page:
+  // a single dropped request should not end up looking like the app is
+  // down.
   if (request.mode === 'navigate') {
     event.respondWith(
       (async () => {
         try {
           return await fetch(request);
         } catch {
-          const cache = await caches.open(STATIC_CACHE);
-          const offline = await cache.match(OFFLINE_URL);
-          return (
-            offline ??
-            new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } })
-          );
+          try {
+            return await fetch(request);
+          } catch {
+            return offlinePage();
+          }
         }
       })()
     );
@@ -107,13 +141,21 @@ self.addEventListener('fetch', (event) => {
         return cached;
       }
 
-      const response = await fetch(request);
+      try {
+        const response = await fetch(request);
 
-      if (response.ok && response.type === 'basic') {
-        cache.put(request, response.clone());
+        if (response.ok && response.type === 'basic') {
+          cache.put(request, response.clone());
+        }
+
+        return response;
+      } catch {
+        // Letting this reject hands the page a hard resource error, and
+        // for one of Next's chunks that means the app never hydrates -
+        // a blank screen rather than a missing image. A 504 is at least
+        // a response the page can fail on predictably.
+        return new Response('', { status: 504, statusText: 'Offline' });
       }
-
-      return response;
     })()
   );
 });

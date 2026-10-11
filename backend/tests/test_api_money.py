@@ -523,3 +523,68 @@ def test_cannot_reverse_another_users_transaction(api, engine, monkeypatch):
 
     assert response.status_code == 404
     assert balances(api)["BCA"] == 965_000
+
+
+# ----------------------------------------------------------------------
+# A browser that lost its session, following a plain link.
+
+
+def _anon(engine, monkeypatch):
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+
+    from app import db as db_module
+    from app.main import app
+
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False, future=True)
+    monkeypatch.setattr(db_module, "get_session_factory", lambda: factory)
+
+    return TestClient(app)
+
+
+def test_a_browser_navigation_is_sent_to_sign_in(engine, monkeypatch):
+    """The CSV exports are plain links, so an expired session used to
+    navigate the whole tab onto `{"detail":{"code":"not_authenticated"}}`
+    — the app gone, nothing to click but Back."""
+    with _anon(engine, monkeypatch) as anon:
+        response = anon.get(
+            "/export/transactions.csv",
+            headers={"Accept": "text/html,application/xhtml+xml"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/auth/sign-in"
+
+
+def test_fetch_still_gets_json(engine, monkeypatch):
+    """Everything else here is called by fetch, which wants the code,
+    not a redirect to a page it cannot render."""
+    with _anon(engine, monkeypatch) as anon:
+        response = anon.get("/accounts", headers={"Accept": "application/json"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "not_authenticated"
+
+
+def test_a_caller_that_states_no_preference_gets_json(engine, monkeypatch):
+    """`*/*` is what a bare fetch sends. Only an explicit text/html —
+    a document navigation — is treated as a browser."""
+    with _anon(engine, monkeypatch) as anon:
+        response = anon.get("/accounts", headers={"Accept": "*/*"})
+
+    assert response.status_code == 401
+
+
+def test_a_post_is_never_redirected(engine, monkeypatch):
+    """A redirect would turn a refused write into a GET of a page, and
+    the caller would read that as success."""
+    with _anon(engine, monkeypatch) as anon:
+        response = anon.post(
+            "/accounts",
+            json={},
+            headers={"Accept": "text/html"},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 401

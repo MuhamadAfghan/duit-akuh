@@ -9,10 +9,11 @@ The chat orchestrator is wired to the lumi-ai adapter; see
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from .api.routes_accounts import router as accounts_router
 from .api.routes_auth import router as auth_router
@@ -41,6 +42,39 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+#: Where a browser that lost its session is sent.
+#:
+#: Relative on purpose: the browser reached the API through the
+#: frontend's own origin (`/srv/*`, rewritten by next.config.mjs), so a
+#: relative Location lands on the app rather than on the API host.
+SIGN_IN_PATH = "/auth/sign-in"
+
+
+@app.exception_handler(HTTPException)
+async def unauthenticated_handler(request: Request, exc: HTTPException):
+    """Send a *browser* to the sign-in page instead of showing it JSON.
+
+    Almost everything here is called by fetch, and a 401 body is exactly
+    what that wants. But two things are plain links — the CSV exports —
+    because letting the browser handle the download keeps the
+    Content-Disposition filename and the session cookie without any
+    JavaScript. When the session has expired, those links were
+    navigating the whole tab onto an API response, and the person was
+    left staring at `{"detail":{"code":"not_authenticated"}}` with the
+    app gone and only the back button to save them.
+
+    An HTML `Accept` on a GET is a document navigation; nothing else in
+    this API asks for HTML. Every other caller keeps the JSON.
+    """
+    wants_html = "text/html" in request.headers.get("accept", "")
+
+    if exc.status_code == 401 and request.method == "GET" and wants_html:
+        # 303: whatever the original method, follow this with a GET.
+        return RedirectResponse(SIGN_IN_PATH, status_code=303)
+
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(DomainError)
