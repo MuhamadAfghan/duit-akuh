@@ -9,7 +9,6 @@ import Button from '@mui/material/Button';
 import Collapse from '@mui/material/Collapse';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import LinearProgress from '@mui/material/LinearProgress';
 
 import { paths } from 'src/routes/paths';
 
@@ -20,11 +19,14 @@ import {
   Pill,
   Ring,
   Money,
+  Loading,
   HeroCard,
   BoardBody,
   BoardNote,
   BoardTitle,
   SurfaceEmpty,
+  SkeletonHero,
+  SkeletonRows,
 } from '../../common';
 
 // ----------------------------------------------------------------------
@@ -76,9 +78,13 @@ export function TargetView() {
     <>
       <BoardTitle title="Target" backHref={paths.ringkasan} />
 
-      {loading && <LinearProgress />}
-
       <BoardBody>
+        {loading && (
+          <Loading label="Memuat target…">
+            <SkeletonHero />
+            <SkeletonRows rows={3} />
+          </Loading>
+        )}
         {error && (
           <SurfaceEmpty
             icon="solar:danger-triangle-bold"

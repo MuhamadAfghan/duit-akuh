@@ -6,7 +6,6 @@ import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
-import LinearProgress from '@mui/material/LinearProgress';
 
 import { paths } from 'src/routes/paths';
 import { RouterLink } from 'src/routes/components';
@@ -21,6 +20,7 @@ import {
   Bar,
   Money,
   TileRow,
+  Loading,
   StatTile,
   HeroCard,
   BoardBody,
@@ -28,6 +28,10 @@ import {
   BoardTitle,
   SectionLabel,
   SurfaceEmpty,
+  SkeletonCard,
+  SkeletonHero,
+  SkeletonLine,
+  SkeletonTiles,
 } from '../../common';
 
 // ----------------------------------------------------------------------
@@ -91,9 +95,17 @@ export function SummaryView() {
         action={<FilterChip value={period} onChange={setPeriod} options={PERIODS} />}
       />
 
-      {loading && <LinearProgress />}
-
       <BoardBody>
+        {loading && (
+          <Loading label="Memuat ringkasan…">
+            <SkeletonHero>
+              <SkeletonLine w="100%" h={92} sx={{ mt: 2, bgcolor: 'grey.700' }} />
+            </SkeletonHero>
+            <SkeletonTiles />
+            <SkeletonCard height={168} />
+            <SkeletonCard height={132} />
+          </Loading>
+        )}
         {error && (
           <SurfaceEmpty icon="solar:danger-triangle-bold" title="Gagal memuat" body={error} />
         )}

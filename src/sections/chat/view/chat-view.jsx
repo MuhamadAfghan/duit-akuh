@@ -10,6 +10,7 @@ import { ChatHeader } from '../chat-header';
 import { ChatThread } from '../chat-thread';
 import { ChatTyping } from '../chat-typing';
 import { ChatSessions } from '../chat-sessions';
+import { ChatSkeleton } from '../chat-skeleton';
 import { ChatComposer } from '../chat-composer';
 import { DraftCard, DraftSheet } from '../cards';
 import { WalletSuggestions, FIRST_RUN_GREETING } from '../first-run';
@@ -156,6 +157,11 @@ export function ChatView() {
   const [conversation, setConversation] = useState(null);
   const [threads, setThreads] = useState([]);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  //: False until a thread's first page has landed. The view used to
+  //: open on the welcome message and then swap it for the real
+  //: history, so every launch flashed a greeting at someone who had
+  //: been using the app for months.
+  const [ready, setReady] = useState(false);
 
   /**
    * Lets the person stop waiting.
@@ -231,6 +237,7 @@ export function ChatView() {
       // no longer on screen.
       setReplyTo(null);
       setMessages([WELCOME]);
+      setReady(false);
 
       await reload();
     },
@@ -655,21 +662,25 @@ export function ChatView() {
         onUpdate={handleUpdateThread}
       />
 
-      <ChatThread
-        messages={thread}
-        renderCard={renderCard}
-        onReply={handleReply}
-        footer={
-          isTyping ? (
-            <ChatTyping stage={stage} />
-          ) : untouched ? (
-            <WalletSuggestions
-              disabled={sending}
-              onPick={(name) => setPrefill({ text: name, at: Date.now() })}
-            />
-          ) : null
-        }
-      />
+      {!ready && <ChatSkeleton />}
+
+      {ready && (
+        <ChatThread
+          messages={thread}
+          renderCard={renderCard}
+          onReply={handleReply}
+          footer={
+            isTyping ? (
+              <ChatTyping stage={stage} />
+            ) : untouched ? (
+              <WalletSuggestions
+                disabled={sending}
+                onPick={(name) => setPrefill({ text: name, at: Date.now() })}
+              />
+            ) : null
+          }
+        />
+      )}
 
       <DraftSheet
         card={pendingCard}

@@ -5,7 +5,6 @@ import { useState, useEffect, useCallback } from 'react';
 import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
-import LinearProgress from '@mui/material/LinearProgress';
 
 import { paths } from 'src/routes/paths';
 
@@ -18,6 +17,7 @@ import { Iconify } from 'src/components/iconify';
 import {
   Money,
   ListRow,
+  Loading,
   ListCard,
   BoardBody,
   RowAvatar,
@@ -25,6 +25,7 @@ import {
   BoardTitle,
   RowDivider,
   SurfaceEmpty,
+  SkeletonRows,
 } from '../../common';
 
 // ----------------------------------------------------------------------
@@ -207,9 +208,12 @@ export function DataView() {
         <FilterChip value={type} onChange={setType} options={TYPE_FILTERS} />
       </Stack>
 
-      {loading && <LinearProgress />}
-
       <BoardBody>
+        {loading && (
+          <Loading label="Memuat transaksi…">
+            <SkeletonRows rows={6} />
+          </Loading>
+        )}
         {error && (
           <SurfaceEmpty icon="solar:danger-triangle-bold" title="Gagal memuat data" body={error} />
         )}

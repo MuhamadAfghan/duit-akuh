@@ -7,6 +7,8 @@ import Menu from '@mui/material/Menu';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
+import { visuallyHidden } from '@mui/utils';
+import Skeleton from '@mui/material/Skeleton';
 import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
@@ -119,6 +121,141 @@ export function BoardBody({ children, sx }) {
     >
       {children}
     </Box>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+/**
+ * Placeholders shaped like the thing that is coming.
+ *
+ * A skeleton is only worth more than a spinner if it occupies the same
+ * space as the real content: otherwise it is a prettier spinner that
+ * also shifts the layout when the data lands, and the PRD asks the
+ * chat shell to hold CLS at 0.1 or under. So these mirror the cards
+ * above them — same radii, same paddings, same row height — and each
+ * screen composes its own out of them rather than sharing one generic
+ * blob.
+ *
+ * They are `aria-hidden` and the surface says it is loading once, out
+ * loud. Six announced grey rectangles are noise to a screen reader.
+ */
+
+/** The wave, unless the person asked for less motion (FR18). */
+const skeletonSx = {
+  '@media (prefers-reduced-motion: reduce)': { '&::after': { animation: 'none' } },
+};
+
+/** One line of text-shaped grey. `w` is a percentage or a number. */
+export function SkeletonLine({ w = '100%', h = 14, sx }) {
+  return (
+    <Skeleton
+      variant="rounded"
+      animation="wave"
+      width={w}
+      height={h}
+      sx={[skeletonSx, { borderRadius: 1 }, ...(Array.isArray(sx) ? sx : [sx])]}
+    />
+  );
+}
+
+/**
+ * The dark hero, before its number arrives.
+ *
+ * Dark on purpose: the real one is `grey.800`, and flashing a white
+ * card that turns black is worse than a moment of grey.
+ */
+export function SkeletonHero({ children }) {
+  return (
+    <Card aria-hidden sx={{ p: 2.5, borderRadius: 3, bgcolor: 'grey.800' }}>
+      <SkeletonLine w={140} h={13} sx={{ bgcolor: 'grey.700' }} />
+      <SkeletonLine w={210} h={38} sx={{ mt: 1, bgcolor: 'grey.700' }} />
+      {children}
+    </Card>
+  );
+}
+
+/** Two tiles, the width and height of the real pair. */
+export function SkeletonTiles() {
+  return (
+    <Box
+      aria-hidden
+      sx={{ gap: 1.5, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
+    >
+      {[0, 1].map((slot) => (
+        <Box key={slot} sx={{ p: 2, borderRadius: 2.5, bgcolor: 'common.white' }}>
+          <SkeletonLine w="70%" h={12} />
+          <SkeletonLine w="55%" h={20} sx={{ mt: 1 }} />
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+/**
+ * A list card with `rows` placeholder rows.
+ *
+ * The 74px avatar column and the hairline inset match `RowDivider`, so
+ * the real rows drop into exactly these positions.
+ */
+export function SkeletonRows({ rows = 3 }) {
+  return (
+    <Card aria-hidden sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
+      {Array.from({ length: rows }, (unused, index) => (
+        <Box key={index}>
+          {index > 0 && <Box sx={{ height: '1px', ml: '74px', bgcolor: 'grey.200' }} />}
+
+          <Stack direction="row" sx={{ px: 2, py: 1.75, gap: 1.5, alignItems: 'center' }}>
+            <Skeleton
+              variant="circular"
+              animation="wave"
+              width={44}
+              height={44}
+              sx={[skeletonSx, { flexShrink: 0 }]}
+            />
+
+            <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+              <SkeletonLine w={`${55 + ((index * 13) % 30)}%`} h={15} />
+              <SkeletonLine w={`${34 + ((index * 17) % 24)}%`} h={12} sx={{ mt: 0.75 }} />
+            </Box>
+
+            <SkeletonLine w={74} h={15} />
+          </Stack>
+        </Box>
+      ))}
+    </Card>
+  );
+}
+
+/**
+ * Wraps a screen's placeholders and says "loading" once.
+ *
+ * The skeletons themselves are `aria-hidden`: six announced grey
+ * rectangles are noise, and the one thing worth saying is that the
+ * screen is working on it.
+ */
+export function Loading({ label = 'Memuat…', children }) {
+  return (
+    <>
+      <Box role="status" aria-live="polite" sx={visuallyHidden}>
+        {label}
+      </Box>
+
+      {children}
+    </>
+  );
+}
+
+/** A plain card of a given height, for sections with their own shape. */
+export function SkeletonCard({ height = 120 }) {
+  return (
+    <Skeleton
+      aria-hidden
+      variant="rounded"
+      animation="wave"
+      height={height}
+      sx={[skeletonSx, { borderRadius: 2.5 }]}
+    />
   );
 }
 

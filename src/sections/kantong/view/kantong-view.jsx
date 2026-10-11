@@ -7,7 +7,6 @@ import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
-import LinearProgress from '@mui/material/LinearProgress';
 
 import { paths } from 'src/routes/paths';
 import { RouterLink } from 'src/routes/components';
@@ -22,6 +21,7 @@ import {
   Money,
   TileRow,
   ListRow,
+  Loading,
   ListCard,
   StatTile,
   HeroCard,
@@ -34,6 +34,9 @@ import {
   QuickAction,
   SectionLabel,
   SurfaceEmpty,
+  SkeletonLine,
+  SkeletonRows,
+  SkeletonTiles,
 } from '../../common';
 
 // ----------------------------------------------------------------------
@@ -105,9 +108,14 @@ export function KantongView() {
         }
       />
 
-      {loading && <LinearProgress />}
-
       <BoardBody>
+        {loading && (
+          <Loading label="Memuat kantong…">
+            <SkeletonTiles />
+            <SkeletonLine w={120} h={12} sx={{ mt: 0.5 }} />
+            <SkeletonRows rows={4} />
+          </Loading>
+        )}
         {error && (
           <SurfaceEmpty
             icon="solar:danger-triangle-bold"

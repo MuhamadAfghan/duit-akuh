@@ -8,7 +8,6 @@ import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
-import LinearProgress from '@mui/material/LinearProgress';
 
 import { paths } from 'src/routes/paths';
 import { RouterLink } from 'src/routes/components';
@@ -22,12 +21,15 @@ import {
   Bar,
   Pill,
   Money,
+  Loading,
   BoardBody,
   BoardNote,
   BoardTitle,
   FilterChip,
   BoardAction,
   SurfaceEmpty,
+  SkeletonCard,
+  SkeletonRows,
 } from '../../common';
 
 // ----------------------------------------------------------------------
@@ -101,9 +103,13 @@ export function BudgetView() {
         }
       />
 
-      {loading && <LinearProgress />}
-
       <BoardBody>
+        {loading && (
+          <Loading label="Memuat budget…">
+            <SkeletonCard height={132} />
+            <SkeletonRows rows={4} />
+          </Loading>
+        )}
         {error && (
           <SurfaceEmpty
             icon="solar:danger-triangle-bold"

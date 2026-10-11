@@ -10,6 +10,8 @@ export * from './chat-typing';
 
 export * from './chat-message';
 
+export * from './chat-skeleton';
+
 export * from './chat-sessions';
 
 export * from './chat-composer';
