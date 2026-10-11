@@ -26,7 +26,7 @@ const isStandalone = process.env.BUILD_STANDALONE === '1';
 
 /**
  * Where the FastAPI backend lives. The browser never sees this: requests
- * go to /api/* on this origin and are proxied below.
+ * go to /srv/* on this origin and are proxied below.
  *
  * NOTE: `rewrites()` is evaluated at build time and baked into
  * `routes-manifest.json`, so this has to be set when the bundle is built
@@ -38,8 +38,8 @@ const nextConfig = {
   /**
    * Only for static export, where it matters for hosting.
    *
-   * With it on for a served app, Next 308-redirects `/api/health` to
-   * `/api/health/` before the rewrite runs, and the trailing slash then
+   * With it on for a served app, Next 308-redirects `/srv/health` to
+   * `/srv/health/` before the rewrite runs, and the trailing slash then
    * does not match the backend's routes — so every API call becomes a
    * redirect chain.
    */
@@ -62,16 +62,22 @@ const nextConfig = {
    * and the PWA only ever talks to one host — which is also what the PRD
    * specifies.
    *
-   * Note `/api` is stripped: the backend's own routes are `/auth/...`,
+   * Note `/srv` is stripped: the backend's own routes are `/auth/...`,
    * `/accounts`, `/chat/...`. The prefix exists so the service worker can
    * recognise API traffic and never cache it.
+   *
+   * It is `/srv` rather than `/api` on purpose. Content blockers match
+   * on path, and one killed `/api/auth/me`, `/api/accounts` and
+   * `/api/chat/messages` in the browser before they were ever sent,
+   * which read to the app as a signed-out user. See the header comment
+   * in src/lib/api.js. Both must agree, and so must public/sw.js.
    */
   async rewrites() {
     if (isStaticExport) {
       return [];
     }
 
-    return [{ source: '/api/:path*', destination: `${BACKEND_URL}/:path*` }];
+    return [{ source: '/srv/:path*', destination: `${BACKEND_URL}/:path*` }];
   },
   // Without --turbopack (next dev)
   webpack(config) {

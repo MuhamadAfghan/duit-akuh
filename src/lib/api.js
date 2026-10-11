@@ -7,12 +7,22 @@
  * JavaScript to hold, which is the point — an XSS bug cannot read a
  * cookie it cannot see.
  *
- * Every call goes to `/api/*` on this origin and is proxied to FastAPI by
+ * Every call goes to `/srv/*` on this origin and is proxied to FastAPI by
  * the rewrite in next.config.mjs, so requests are same-origin and the
  * `SameSite=Lax` cookie is sent.
+ *
+ * The prefix is `/srv`, not the obvious `/api`, because content blockers
+ * ship rules that match on path. We watched an extension kill
+ * `fetch('/api/auth/me')`, `/api/accounts` and `/api/chat/messages`
+ * before they left the browser — `TypeError: Failed to fetch`, no
+ * request on the wire — while `/api/summary` and `/api/auth/me?x=1` went
+ * through untouched. That is pattern matching on the path, and we cannot
+ * fix someone else's filter list. Moving off `/api` sidesteps the whole
+ * class of rule. Change this and you must change the rewrite in
+ * next.config.mjs and NEVER_CACHE_PREFIXES in public/sw.js with it.
  */
 
-const BASE = '/api';
+const BASE = '/srv';
 
 export class ApiError extends Error {
   constructor(message, { status, code, body } = {}) {
@@ -107,7 +117,9 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
 export const api = {
   get: (path, options) => request(path, { ...options, method: 'GET' }),
   post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
+  put: (path, body, options) => request(path, { ...options, method: 'PUT', body }),
   patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
+  del: (path, options) => request(path, { ...options, method: 'DELETE' }),
 };
 
 // ----------------------------------------------------------------------
@@ -119,6 +131,16 @@ export const authApi = {
   login: (email, password) => api.post('/auth/login', { email, password }),
   register: (email, password) => api.post('/auth/register', { email, password }),
   logout: () => api.post('/auth/logout'),
+
+  /**
+   * Always resolves for a well-formed address, registered or not. The
+   * backend answers 202 either way on purpose, so there is nothing here
+   * to branch on and nothing to tell the user beyond "check your mail".
+   */
+  forgotPassword: (email) => api.post('/auth/forgot-password', { email }),
+
+  resetPassword: (token, newPassword) =>
+    api.post('/auth/reset-password', { token, new_password: newPassword }),
 };
 
 export const accountsApi = {
@@ -130,10 +152,46 @@ export const accountsApi = {
 export const goalsApi = {
   /** `remainingDeposits` drives the per-deposit figure; 0 means unscheduled. */
   list: (remainingDeposits = 0) => api.get(`/goals?remaining_deposits=${remainingDeposits}`),
+
+  /**
+   * The FR11 options for reaching a goal on a given monthly capacity:
+   * more deposits, more up front, or more per period.
+   */
+  plan: (id, capacity) => api.get(`/goals/${id}/plan?capacity=${capacity}`),
+
+  /**
+   * Earmarks money that stays where it is. `amount` **replaces** this
+   * goal's mark on that account rather than adding to it, so sending
+   * the same request twice leaves the same figure.
+   *
+   * The server refuses to earmark more than an account actually holds
+   * (AC05), so the error from here is the rule talking, not a
+   * validation nicety.
+   */
+  allocate: (id, accountId, amount) =>
+    api.post(`/goals/${id}/allocations`, { account_id: accountId, amount }),
+
+  /** Drops the mark entirely. Zero is not a valid `allocate` amount. */
+  release: (id, accountId) => api.post(`/goals/${id}/allocations/release?account_id=${accountId}`),
 };
 
 export const budgetsApi = {
   list: (period = 'bulan_ini') => api.get(`/budgets?period=${period}`),
+
+  /** Creates or replaces one category's monthly limit. */
+  set: (category, amount) => api.put('/budgets', { category, amount }),
+
+  remove: (category) => api.del(`/budgets?category=${encodeURIComponent(category)}`),
+};
+
+/**
+ * Simulations change nothing until a plan is applied (AC07), so none of
+ * these need a confirmation card.
+ */
+export const simulationsApi = {
+  saving: (payload) => api.post('/simulations/saving', payload),
+  deposit: (payload) => api.post('/simulations/deposit', payload),
+  capacity: () => api.get('/simulations/capacity'),
 };
 
 export const reportsApi = {
@@ -142,8 +200,32 @@ export const reportsApi = {
 };
 
 export const transactionsApi = {
-  list: (limit = 50) => api.get(`/transactions?limit=${limit}`),
+  /**
+   * Filters are applied by the server, never by narrowing a page here:
+   * "transfers this month" computed over the last fifty rows is a
+   * different question with a quietly different answer.
+   */
+  list: ({ limit = 50, period, type, accountId } = {}) => {
+    const query = new URLSearchParams({ limit: String(limit) });
+
+    if (period) query.set('period', period);
+    if (type) query.set('type', type);
+    if (accountId) query.set('account_id', accountId);
+
+    return api.get(`/transactions?${query}`);
+  },
+
+  /** Impact only. Writes nothing, so it is safe to call as you type. */
   preview: (draft) => api.post('/transactions/preview', draft),
+
+  /**
+   * The header is mandatory, not best-effort: AC04 requires a
+   * confirmation sent twice to produce exactly one transaction, and the
+   * backend answers 422 without it rather than silently dropping the
+   * guarantee.
+   */
+  create: (draft, operationId) =>
+    api.post('/transactions', draft, { headers: { 'Idempotency-Key': operationId } }),
 };
 
 /**

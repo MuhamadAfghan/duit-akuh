@@ -17,10 +17,23 @@ export const paths = {
   data: '/data',
   faqs: '/faqs',
   minimalStore: 'https://mui.com/store/items/minimal-dashboard/',
+  /**
+   * Surfaces reached from Ringkasan or the tab bar. Everything here can
+   * also be done in chat (FR14); these exist because a list is a better
+   * way to read ten wallets than a sentence is.
+   */
+  catat: '/catat',
+  kantong: '/kantong',
+  budget: '/budget',
+  target: '/target',
+  simulasi: '/simulasi',
   // AUTH
   auth: {
     signIn: `${ROOTS.AUTH}/sign-in`,
     signUp: `${ROOTS.AUTH}/sign-up`,
+    forgot: `${ROOTS.AUTH}/lupa`,
+    checkEmail: `${ROOTS.AUTH}/cek-email`,
+    reset: `${ROOTS.AUTH}/reset`,
   },
   // DASHBOARD
   dashboard: {

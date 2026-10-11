@@ -20,6 +20,7 @@ from ..domain.balances import (
     net_worth,
     total_debt,
 )
+from ..domain.periods import as_utc, get_zone
 from ..models import LIQUID_TYPES, Account, AccountKind, Allocation
 from ..services.accounts import open_account_with_balance
 from .deps import CurrentUser, DbSessionDep
@@ -76,7 +77,11 @@ def create_account(body: AccountCreateIn, user: CurrentUser, db: DbSessionDep) -
         alias=body.alias,
         opening_balance=body.opening_balance,
         credit_limit=body.credit_limit,
-        occurred_at=body.occurred_at,
+        occurred_at=(
+            as_utc(body.occurred_at, get_zone(user.timezone))
+            if body.occurred_at is not None
+            else None
+        ),
     )
 
     snapshots = {s.id: s for s in _snapshots(db, user.id)}

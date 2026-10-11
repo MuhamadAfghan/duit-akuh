@@ -1,14 +1,15 @@
 'use client';
 
-import { varAlpha } from 'minimal-shared/utils';
 import { useState, useEffect, useCallback } from 'react';
 
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
-import Divider from '@mui/material/Divider';
 import Typography from '@mui/material/Typography';
 import LinearProgress from '@mui/material/LinearProgress';
+
+import { paths } from 'src/routes/paths';
+import { RouterLink } from 'src/routes/components';
 
 import { formatRupiah } from 'src/utils/format-money';
 
@@ -16,61 +17,54 @@ import { goalsApi, budgetsApi, reportsApi, accountsApi } from 'src/lib/api';
 
 import { Iconify } from 'src/components/iconify';
 
-import { GoalCard } from '../goal-card';
-import { BudgetCard, BudgetNote } from '../budget-card';
-import { SurfaceEmpty, SurfaceHeader } from '../../common';
+import {
+  Bar,
+  Money,
+  TileRow,
+  StatTile,
+  HeroCard,
+  BoardBody,
+  FilterChip,
+  BoardTitle,
+  SectionLabel,
+  SurfaceEmpty,
+} from '../../common';
 
 // ----------------------------------------------------------------------
 
-function Figure({ label, value, hint, emphasis = false, negative = false }) {
-  return (
-    <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 2 }}>
-      <Box>
-        <Typography variant={emphasis ? 'subtitle1' : 'body2'} sx={{ color: 'text.secondary' }}>
-          {label}
-        </Typography>
-        {hint && (
-          <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-            {hint}
-          </Typography>
-        )}
-      </Box>
+/** Bar colours, in the order categories come back. */
+const SERIES = ['good', 'info', 'ink', 'warn'];
 
-      <Typography
-        variant={emphasis ? 'h6' : 'subtitle2'}
-        sx={{ color: negative ? 'error.main' : 'text.primary', whiteSpace: 'nowrap' }}
-      >
-        {formatRupiah(value)}
-      </Typography>
-    </Stack>
-  );
-}
-
-// ----------------------------------------------------------------------
+/** Only the keywords the backend resolves (domain/periods.py). */
+const PERIODS = [
+  { value: 'bulan_ini', label: 'Bulan ini' },
+  { value: 'minggu_ini', label: 'Minggu ini' },
+  { value: 'bulan_lalu', label: 'Bulan lalu' },
+  { value: '30_hari', label: '30 hari' },
+  { value: 'tahun_ini', label: 'Tahun ini' },
+];
 
 export function SummaryView() {
   const [data, setData] = useState(null);
-  const [accounts, setAccounts] = useState([]);
   const [report, setReport] = useState(null);
   const [goals, setGoals] = useState([]);
   const [budgets, setBudgets] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [period, setPeriod] = useState('bulan_ini');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [summary, rows, spending, goalRows, budgetReport] = await Promise.all([
+      const [summary, spending, goalRows, budgetReport] = await Promise.all([
         accountsApi.summary(),
-        accountsApi.list(),
-        reportsApi.spending('bulan_ini'),
-        // 6 is a placeholder schedule until goals carry deposit dates;
-        // it only affects the per-deposit hint, never the saved figure.
+        reportsApi.spending(period),
+        // Six is a placeholder schedule until goals carry deposit dates;
+        // it only affects the per-deposit hint, never a saved figure.
         goalsApi.list(6),
-        budgetsApi.list('bulan_ini'),
+        budgetsApi.list(period),
       ]);
       setData(summary);
-      setAccounts(rows);
       setReport(spending);
       setGoals(goalRows);
       setBudgets(budgetReport);
@@ -80,171 +74,222 @@ export function SummaryView() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const renderBody = () => {
-    if (loading) {
-      return <LinearProgress sx={{ m: 2 }} />;
-    }
-
-    if (error) {
-      return <SurfaceEmpty icon="solar:danger-triangle-bold" title="Gagal memuat" body={error} />;
-    }
-
-    if (!accounts.length) {
-      return (
-        <SurfaceEmpty
-          icon="solar:wad-of-money-bold"
-          title="Belum ada kantong"
-          body="Buat kantong pertamamu lewat chat, misalnya: “tambah BCA saldo 5 juta”."
-        />
-      );
-    }
-
-    return (
-      <Stack sx={{ p: 2, gap: 2 }}>
-        <Card sx={{ p: 2 }}>
-          <Stack spacing={1.5}>
-            <Figure label="Saldo likuid" value={data.liquid} emphasis />
-            <Divider sx={{ borderStyle: 'dashed' }} />
-            <Figure
-              label="Uang bebas pakai"
-              hint="Setelah alokasi target dan cadangan"
-              value={data.free_to_spend}
-              negative={data.is_shortfall}
-            />
-            <Figure label="Dana target" value={data.allocated} />
-            <Figure label="Total utang" value={data.total_debt} negative={data.total_debt > 0} />
-            <Divider sx={{ borderStyle: 'dashed' }} />
-            <Figure label="Aset bersih" value={data.net_worth} />
-          </Stack>
-
-          {data.is_shortfall && (
-            <Typography variant="caption" sx={{ mt: 1.5, display: 'block', color: 'error.main' }}>
-              Alokasi dan cadangan melebihi saldo likuid.
-            </Typography>
-          )}
-        </Card>
-
-        <Card sx={{ p: 2 }}>
-          <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-            Kantong
-          </Typography>
-
-          <Stack sx={{ mt: 1.5, gap: 1.5 }}>
-            {accounts.map((account) => (
-              <Stack
-                key={account.id}
-                direction="row"
-                sx={{ justifyContent: 'space-between', alignItems: 'center', gap: 2 }}
-              >
-                <Stack direction="row" sx={{ alignItems: 'center', gap: 1.5, minWidth: 0 }}>
-                  <Box
-                    sx={(theme) => ({
-                      width: 36,
-                      height: 36,
-                      flexShrink: 0,
-                      display: 'grid',
-                      placeItems: 'center',
-                      borderRadius: '50%',
-                      color: 'primary.main',
-                      bgcolor: varAlpha(theme.vars.palette.primary.mainChannel, 0.12),
-                    })}
-                  >
-                    <Iconify icon="solar:wad-of-money-bold" width={18} />
-                  </Box>
-
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography variant="subtitle2" noWrap>
-                      {account.name}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-                      {account.type}
-                      {account.is_archived ? ' · diarsipkan' : ''}
-                    </Typography>
-                  </Box>
-                </Stack>
-
-                <Typography
-                  variant="subtitle2"
-                  sx={{
-                    whiteSpace: 'nowrap',
-                    color: account.debt > 0 ? 'error.main' : 'text.primary',
-                  }}
-                >
-                  {account.debt > 0 ? formatRupiah(account.debt) : formatRupiah(account.balance)}
-                </Typography>
-              </Stack>
-            ))}
-          </Stack>
-        </Card>
-
-        {goals.length > 0 && (
-          <Stack sx={{ gap: 1.5 }}>
-            <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-              Target
-            </Typography>
-            {goals.map((goal) => (
-              <GoalCard key={goal.id} goal={goal} />
-            ))}
-          </Stack>
-        )}
-
-        {budgets?.budgets?.length > 0 && (
-          <Stack sx={{ gap: 1.5 }}>
-            <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-              Budget {budgets.label}
-            </Typography>
-            {budgets.budgets.map((budget) => (
-              <BudgetCard key={budget.category} budget={budget} />
-            ))}
-            <BudgetNote />
-          </Stack>
-        )}
-
-        {report && (
-          <Card sx={{ p: 2 }}>
-            {/* The period comes from the backend, which resolves it in the
-                user's timezone — the label and the figures cannot disagree. */}
-            <Typography variant="overline" sx={{ color: 'text.secondary' }}>
-              {report.label}
-            </Typography>
-
-            <Stack sx={{ mt: 1.5, gap: 1 }}>
-              <Figure label="Pengeluaran" value={report.expense_total} />
-              <Figure label="Pemasukan" value={report.income_total} />
-            </Stack>
-
-            {report.categories.length > 0 && (
-              <>
-                <Divider sx={{ my: 2, borderStyle: 'dashed' }} />
-                <Stack sx={{ gap: 1 }}>
-                  {report.categories.map((category) => (
-                    <Figure key={category.name} label={category.name} value={category.amount} />
-                  ))}
-                </Stack>
-              </>
-            )}
-
-            {!report.transaction_count && (
-              <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-                Belum ada transaksi pada periode ini.
-              </Typography>
-            )}
-          </Card>
-        )}
-      </Stack>
-    );
-  };
+  const biggest = report?.categories?.length
+    ? Math.max(...report.categories.map((category) => category.amount))
+    : 0;
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
-      <SurfaceHeader title="Ringkasan" />
-      <Box sx={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto' }}>{renderBody()}</Box>
+    <>
+      <BoardTitle
+        title="Ringkasan"
+        action={<FilterChip value={period} onChange={setPeriod} options={PERIODS} />}
+      />
+
+      {loading && <LinearProgress />}
+
+      <BoardBody>
+        {error && (
+          <SurfaceEmpty icon="solar:danger-triangle-bold" title="Gagal memuat" body={error} />
+        )}
+
+        {!error && data && (
+          <>
+            <HeroCard
+              label="Bebas pakai sampai akhir bulan"
+              amount={data.free_to_spend}
+              caption="Sisa limit kartu tidak ikut di sini. Limit bukan uang."
+            >
+              <Stack
+                sx={{ mt: 2, p: 2, gap: 1.25, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.07)' }}
+              >
+                <Breakdown label="Uang cair" value={data.liquid} />
+                <Breakdown label="Ditandai buat target" value={-data.allocated} />
+                <Breakdown label="Utang kartu" value={-data.total_debt} />
+              </Stack>
+            </HeroCard>
+
+            <TileRow>
+              <StatTile label="Kekayaan bersih" amount={data.net_worth} tone="good" />
+              <StatTile
+                label="Masuk vs keluar"
+                amount={(report?.income_total ?? 0) - (report?.expense_total ?? 0)}
+                tone="plain"
+              />
+            </TileRow>
+
+            {report && (
+              <Card sx={{ p: 2.25, borderRadius: 2.5 }}>
+                <Stack
+                  direction="row"
+                  sx={{ mb: 2, gap: 2, alignItems: 'baseline', justifyContent: 'space-between' }}
+                >
+                  {/* The period label comes from the backend, which resolves
+                      it in the user's timezone, so label and figures cannot
+                      disagree. */}
+                  <Typography sx={{ fontSize: 16, fontWeight: 800 }}>
+                    Keluar {report.label.toLowerCase()}
+                  </Typography>
+                  <Money amount={report.expense_total} sx={{ fontSize: 16, fontWeight: 800 }} />
+                </Stack>
+
+                {report.categories.length > 0 ? (
+                  <Stack sx={{ gap: 1.75 }}>
+                    {report.categories.slice(0, 5).map((category, index) => (
+                      <Box key={category.name}>
+                        <Stack
+                          direction="row"
+                          sx={{ mb: 0.75, gap: 2, justifyContent: 'space-between' }}
+                        >
+                          <Typography sx={{ fontSize: 13, fontWeight: 700 }}>
+                            {category.name}
+                          </Typography>
+                          <Money
+                            amount={category.amount}
+                            plain
+                            sx={{ fontSize: 13, fontWeight: 800 }}
+                          />
+                        </Stack>
+                        <Bar
+                          value={biggest ? (category.amount / biggest) * 100 : 0}
+                          tone={SERIES[index % SERIES.length]}
+                          height={12}
+                        />
+                      </Box>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'text.secondary' }}>
+                    Belum ada pengeluaran pada periode ini.
+                  </Typography>
+                )}
+
+                <Typography
+                  sx={{
+                    mt: 1.75,
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    fontWeight: 600,
+                    color: 'text.secondary',
+                  }}
+                >
+                  Pindah antar kantong dan bayar tagihan kartu nggak masuk sini, biar nggak kehitung
+                  dua kali.
+                </Typography>
+              </Card>
+            )}
+
+            <SectionLabel>MENU</SectionLabel>
+            <MenuGrid budgets={budgets} goals={goals} />
+          </>
+        )}
+      </BoardBody>
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+function Breakdown({ label, value }) {
+  return (
+    <Stack direction="row" sx={{ gap: 2, justifyContent: 'space-between' }}>
+      <Typography sx={{ fontSize: 13, fontWeight: 600, color: 'grey.400' }}>{label}</Typography>
+      <Typography sx={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+        {formatRupiah(value)}
+      </Typography>
+    </Stack>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+/**
+ * The way into the three surfaces that are not tabs.
+ *
+ * Each tile carries its own state rather than just a name, so the grid
+ * answers "is anything wrong?" without being opened.
+ */
+function MenuGrid({ budgets, goals }) {
+  const exceeded = budgets?.exceeded?.length ?? 0;
+  const behind = goals.filter((goal) => goal.status === 'needs_adjustment').length;
+
+  const tiles = [
+    {
+      href: paths.budget,
+      icon: 'lega:chart',
+      label: 'Budget',
+      hint: exceeded ? `${exceeded} kategori lewat limit` : 'Semua masih aman',
+      alert: exceeded > 0,
+    },
+    {
+      href: paths.target,
+      icon: 'lega:target',
+      label: 'Target',
+      hint: goals.length
+        ? `${goals.length} target${behind ? `, ${behind} ketinggalan` : ''}`
+        : 'Belum ada target',
+      alert: behind > 0,
+    },
+    { href: paths.simulasi, icon: 'lega:calculator', label: 'Simulasi', hint: 'Nabung & deposito' },
+    {
+      href: '/srv/export/transactions.csv?period=semua',
+      icon: 'lega:download',
+      label: 'Ekspor CSV',
+      hint: 'Ikut filter aktif',
+      external: true,
+    },
+  ];
+
+  return (
+    <Box sx={{ gap: 1.5, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+      {tiles.map((tile) => (
+        <Card
+          key={tile.label}
+          {...(tile.external
+            ? { component: 'a', href: tile.href }
+            : { component: RouterLink, href: tile.href })}
+          sx={{
+            p: 2,
+            gap: 1.25,
+            display: 'flex',
+            minHeight: 44,
+            borderRadius: 2.5,
+            color: 'text.primary',
+            flexDirection: 'column',
+            textDecoration: 'none',
+          }}
+        >
+          <Box
+            sx={{
+              width: 44,
+              height: 44,
+              display: 'grid',
+              placeItems: 'center',
+              borderRadius: '50%',
+              color: tile.alert ? 'error.dark' : 'primary.dark',
+              bgcolor: tile.alert ? 'error.lighter' : 'primary.lighter',
+            }}
+          >
+            <Iconify icon={tile.icon} width={21} />
+          </Box>
+
+          <Typography sx={{ fontSize: 16, fontWeight: 800 }}>{tile.label}</Typography>
+          <Typography
+            sx={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: tile.alert ? 'error.dark' : 'text.secondary',
+            }}
+          >
+            {tile.hint}
+          </Typography>
+        </Card>
+      ))}
     </Box>
   );
 }

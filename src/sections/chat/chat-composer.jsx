@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 
 import Box from '@mui/material/Box';
+import Stack from '@mui/material/Stack';
 import InputBase from '@mui/material/InputBase';
 import IconButton from '@mui/material/IconButton';
 
@@ -11,6 +12,9 @@ import { Iconify } from 'src/components/iconify';
 // ----------------------------------------------------------------------
 
 const DRAFT_STORAGE_KEY = 'chat-composer-draft';
+
+/** Sent as-is when tapped, so a first-time user has somewhere to start. */
+const SUGGESTIONS = ['Saldo semua kantong', 'Sisa budget bulan ini', 'Uang bebas pakai berapa?'];
 
 /**
  * Keeps the unsent message across navigation.
@@ -43,7 +47,13 @@ function writeDraft(value) {
 
 // ----------------------------------------------------------------------
 
-export function ChatComposer({ onSend, disabled = false }) {
+export function ChatComposer({
+  onSend,
+  disabled = false,
+  suggestions = SUGGESTIONS,
+  placeholder = 'Tulis atau tanya…',
+  prefill = null,
+}) {
   const inputRef = useRef(null);
   const [value, setValue] = useState('');
 
@@ -56,6 +66,23 @@ export function ChatComposer({ onSend, disabled = false }) {
       setValue(saved);
     }
   }, []);
+
+  /**
+   * Text handed over from elsewhere — a wallet chip in the first-run
+   * thread, for instance. `prefill.at` is a timestamp rather than a
+   * flag so picking the same chip twice still lands.
+   */
+  useEffect(() => {
+    if (!prefill?.text) {
+      return;
+    }
+
+    const next = `${prefill.text} `;
+
+    setValue(next);
+    writeDraft(next);
+    inputRef.current?.focus();
+  }, [prefill?.text, prefill?.at]);
 
   const handleChange = useCallback((event) => {
     setValue(event.target.value);
@@ -88,60 +115,102 @@ export function ChatComposer({ onSend, disabled = false }) {
   const canSend = Boolean(value.trim()) && !disabled;
 
   return (
-    <Box
-      sx={(theme) => ({
-        flexShrink: 0,
-        px: 1.5,
-        py: 1.25,
-        display: 'flex',
-        alignItems: 'flex-end',
-        gap: 1,
-        bgcolor: theme.vars.palette.background.paper,
-        borderTop: `solid 1px ${theme.vars.palette.divider}`,
-      })}
-    >
-      <InputBase
-        multiline
-        maxRows={5}
-        value={value}
-        inputRef={inputRef}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        placeholder="Catat transaksi atau tanya apa saja"
-        // Hints the soft keyboard to show a send affordance.
-        inputProps={{ 'aria-label': 'Tulis pesan', enterKeyHint: 'send' }}
-        sx={(theme) => ({
-          flex: '1 1 auto',
-          px: 1.75,
-          py: 1,
-          borderRadius: 2.5,
-          bgcolor: theme.vars.palette.background.neutral,
-          // 16px minimum: anything smaller makes iOS Safari zoom the page
-          // on focus, which FR17 forbids.
-          '& .MuiInputBase-input': { fontSize: 16, lineHeight: 1.5 },
-        })}
-      />
-
-      <IconButton
-        color="primary"
-        disabled={!canSend}
-        onClick={handleSend}
-        aria-label="Kirim"
-        sx={(theme) => ({
-          width: 44,
-          height: 44,
-          flexShrink: 0,
-          color: theme.vars.palette.primary.contrastText,
-          bgcolor: theme.vars.palette.primary.main,
-          '&:hover': { bgcolor: theme.vars.palette.primary.dark },
-          '&.Mui-disabled': {
-            color: theme.vars.palette.action.disabled,
-            bgcolor: theme.vars.palette.action.disabledBackground,
-          },
-        })}
+    <Box sx={{ flexShrink: 0 }}>
+      {/* Conversation starters. A chat-first app has to say what it can
+          be asked, or the empty box is the hardest part of it. */}
+      <Stack
+        direction="row"
+        sx={{ px: 2, pb: suggestions.length ? 1 : 0, gap: 1, overflowX: 'auto' }}
       >
-        <Iconify icon="solar:forward-bold" width={22} />
-      </IconButton>
+        {suggestions.map((text) => (
+          <Box
+            key={text}
+            component="button"
+            type="button"
+            disabled={disabled}
+            onClick={() => onSend(text)}
+            sx={{
+              px: 1.75,
+              height: 36,
+              fontSize: 13,
+              flexShrink: 0,
+              fontWeight: 700,
+              cursor: 'pointer',
+              borderRadius: 999,
+              border: '1.5px solid',
+              borderColor: 'grey.300',
+              color: 'text.primary',
+              bgcolor: 'background.paper',
+            }}
+          >
+            {text}
+          </Box>
+        ))}
+      </Stack>
+
+      <Box sx={{ px: 2, pb: 1.25, gap: 1, display: 'flex', alignItems: 'flex-end' }}>
+        <Box
+          sx={{
+            pl: 2,
+            pr: 0.75,
+            flex: '1 1 auto',
+            minWidth: 0,
+            display: 'flex',
+            minHeight: 52,
+            alignItems: 'center',
+            borderRadius: 999,
+            bgcolor: 'grey.100',
+          }}
+        >
+          <InputBase
+            multiline
+            maxRows={5}
+            value={value}
+            inputRef={inputRef}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            inputProps={{ 'aria-label': 'Tulis pesan', enterKeyHint: 'send' }}
+            sx={{
+              flex: '1 1 auto',
+              // 16px minimum: anything smaller makes iOS Safari zoom the
+              // page on focus, which FR17 forbids.
+              '& .MuiInputBase-input': { fontSize: 16, fontWeight: 600, lineHeight: 1.5 },
+            }}
+          />
+
+          <IconButton
+            aria-label="Foto struk"
+            sx={{ width: 40, height: 40, flexShrink: 0, color: 'text.secondary' }}
+          >
+            <Iconify icon="solar:camera-add-bold" width={21} />
+          </IconButton>
+
+          <IconButton
+            aria-label="Rekam suara"
+            sx={{ width: 40, height: 40, flexShrink: 0, color: 'text.secondary' }}
+          >
+            <Iconify icon="solar:microphone-bold" width={21} />
+          </IconButton>
+        </Box>
+
+        <IconButton
+          disabled={!canSend}
+          onClick={handleSend}
+          aria-label="Kirim"
+          sx={{
+            width: 52,
+            height: 52,
+            flexShrink: 0,
+            color: 'primary.contrastText',
+            bgcolor: 'primary.main',
+            '&:hover': { bgcolor: 'primary.dark' },
+            '&.Mui-disabled': { color: 'grey.400', bgcolor: 'grey.200' },
+          }}
+        >
+          <Iconify icon="lega:arrow-right" width={23} />
+        </IconButton>
+      </Box>
     </Box>
   );
 }

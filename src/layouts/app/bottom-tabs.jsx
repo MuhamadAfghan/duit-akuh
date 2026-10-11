@@ -1,9 +1,9 @@
 'use client';
 
 import Box from '@mui/material/Box';
-import ButtonBase from '@mui/material/ButtonBase';
-import Typography from '@mui/material/Typography';
+import Stack from '@mui/material/Stack';
 
+import { paths } from 'src/routes/paths';
 import { usePathname } from 'src/routes/hooks';
 import { RouterLink } from 'src/routes/components';
 
@@ -13,73 +13,96 @@ import { appTabs } from './nav-config-app';
 
 // ----------------------------------------------------------------------
 
-const TAB_HEIGHT = 56;
+/** Pill height. The shell reserves this plus its bottom margin. */
+export const TAB_HEIGHT = 64;
 
 /**
- * Bottom tab bar (PRD FR17).
+ * The bottom bar: a floating dark pill with a raised centre button.
  *
- * - Targets are at least 44x44 CSS px.
- * - Sits above the home indicator via safe-area-inset-bottom.
- * - `hidden` is passed when the keyboard is open, which the PRD allows, so
- *   the composer and messages keep the available height.
+ * Two deliberate departures from a plain tab strip. It floats, so the
+ * content behind it reads as one continuous surface rather than a page
+ * squeezed above a chrome bar. And the centre slot is not a tab at all
+ * — it is the way to record something by hand, given equal footing with
+ * the chat so "manual or chat" is a real choice rather than a fallback
+ * buried in a menu.
  */
-export function BottomTabs({ hidden = false, sx, ...other }) {
+export function BottomTabs({ hidden }) {
   const pathname = usePathname();
-
-  const isActive = (path) =>
-    // Chat lives at '/', so only an exact match counts; the others own
-    // their subtrees.
-    path === '/' ? pathname === '/' : pathname.startsWith(path);
 
   if (hidden) {
     return null;
   }
 
+  const isActive = (path) => (path === '/' ? pathname === '/' : pathname.startsWith(path));
+
   return (
     <Box
       component="nav"
       aria-label="Navigasi utama"
-      sx={[
-        (theme) => ({
-          flexShrink: 0,
-          display: 'flex',
-          bgcolor: theme.vars.palette.background.paper,
-          borderTop: `solid 1px ${theme.vars.palette.divider}`,
-          pb: 'env(safe-area-inset-bottom)',
-        }),
-        ...(Array.isArray(sx) ? sx : [sx]),
-      ]}
-      {...other}
+      sx={{
+        flexShrink: 0,
+        mx: 1.75,
+        mb: 'calc(env(safe-area-inset-bottom) + 14px)',
+        height: TAB_HEIGHT,
+        display: 'grid',
+        gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+        alignItems: 'center',
+        borderRadius: 999,
+        bgcolor: 'grey.800',
+        boxShadow: '0 14px 28px -14px rgba(11,13,14,0.7)',
+      }}
     >
-      {appTabs.map((tab) => {
-        const active = isActive(tab.path);
+      {appTabs.slice(0, 2).map((tab) => (
+        <Tab key={tab.path} tab={tab} active={isActive(tab.path)} />
+      ))}
 
-        return (
-          <ButtonBase
-            key={tab.path}
-            component={RouterLink}
-            href={tab.path}
-            aria-current={active ? 'page' : undefined}
-            sx={(theme) => ({
-              flex: '1 1 0',
-              minWidth: 44,
-              minHeight: TAB_HEIGHT,
-              gap: 0.25,
-              py: 0.75,
-              flexDirection: 'column',
-              color: active ? theme.vars.palette.primary.main : theme.vars.palette.text.secondary,
-            })}
-          >
-            <Iconify icon={tab.icon} width={24} />
-            <Typography
-              variant="caption"
-              sx={{ fontWeight: active ? 'fontWeightSemiBold' : 'fontWeightMedium' }}
-            >
-              {tab.label}
-            </Typography>
-          </ButtonBase>
-        );
-      })}
+      <Box
+        component={RouterLink}
+        href={paths.catat}
+        aria-label="Catat manual"
+        sx={{
+          width: 48,
+          height: 48,
+          display: 'flex',
+          justifySelf: 'center',
+          borderRadius: '50%',
+          alignItems: 'center',
+          color: 'primary.contrastText',
+          bgcolor: 'primary.main',
+          justifyContent: 'center',
+        }}
+      >
+        <Iconify icon="lega:plus" width={24} />
+      </Box>
+
+      {appTabs.slice(2).map((tab) => (
+        <Tab key={tab.path} tab={tab} active={isActive(tab.path)} />
+      ))}
     </Box>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+function Tab({ tab, active }) {
+  return (
+    <Stack
+      component={RouterLink}
+      href={tab.path}
+      aria-current={active ? 'page' : undefined}
+      sx={{
+        gap: 0.4,
+        minHeight: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+        textDecoration: 'none',
+        fontSize: 10,
+        fontWeight: active ? 800 : 700,
+        color: active ? 'common.white' : 'grey.500',
+      }}
+    >
+      <Iconify icon={tab.icon} width={22} />
+      {tab.label}
+    </Stack>
   );
 }

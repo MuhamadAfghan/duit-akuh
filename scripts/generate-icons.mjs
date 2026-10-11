@@ -29,7 +29,7 @@ const TARGETS = [
   { file: 'icon-maskable-192.png', size: 192 },
   { file: 'icon-maskable-512.png', size: 512 },
   // iOS ignores the manifest and reads this; it must not be transparent.
-  { file: 'apple-touch-icon.png', size: 180, flatten: '#00A76F' },
+  { file: 'apple-touch-icon.png', size: 180, flatten: '#009A5B' },
 ];
 
 async function main() {

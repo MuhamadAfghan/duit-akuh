@@ -1,45 +1,76 @@
 'use client';
 
-import { varAlpha } from 'minimal-shared/utils';
 import { useState, useEffect, useCallback } from 'react';
 
 import Box from '@mui/material/Box';
-import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
-import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import LinearProgress from '@mui/material/LinearProgress';
 
-import { formatRupiah } from 'src/utils/format-money';
+import { paths } from 'src/routes/paths';
+
+import { formatRupiahPlain } from 'src/utils/format-money';
 
 import { accountsApi, transactionsApi } from 'src/lib/api';
 
-import { Label } from 'src/components/label';
 import { Iconify } from 'src/components/iconify';
 
-import { SurfaceEmpty, SurfaceHeader } from '../../common';
+import {
+  Money,
+  ListRow,
+  ListCard,
+  BoardBody,
+  RowAvatar,
+  FilterChip,
+  BoardTitle,
+  RowDivider,
+  SurfaceEmpty,
+} from '../../common';
 
 // ----------------------------------------------------------------------
 
-const TYPE_LABELS = {
-  opening: 'Saldo awal',
-  income: 'Pemasukan',
-  expense: 'Pengeluaran',
-  transfer: 'Transfer',
-  card_payment: 'Bayar kartu',
-  refund: 'Refund',
-  reversal: 'Pembatalan',
+/** Only the keywords the backend actually resolves (domain/periods.py). */
+const PERIODS = [
+  { value: 'bulan_ini', label: 'Bulan ini' },
+  { value: 'minggu_ini', label: 'Minggu ini' },
+  { value: 'bulan_lalu', label: 'Bulan lalu' },
+  { value: '30_hari', label: '30 hari' },
+  { value: 'tahun_ini', label: 'Tahun ini' },
+  { value: 'semua', label: 'Semua waktu' },
+];
+
+const TYPE_FILTERS = [
+  { value: null, label: 'Semua jenis' },
+  { value: 'expense', label: 'Pengeluaran' },
+  { value: 'income', label: 'Pemasukan' },
+  { value: 'transfer', label: 'Pindah kantong' },
+  { value: 'card_payment', label: 'Bayar kartu' },
+  { value: 'refund', label: 'Refund' },
+];
+
+const TYPES = {
+  opening: { label: 'Saldo awal', icon: 'lega:wallet', tone: 'grey', note: 'bukan pemasukan' },
+  income: { label: 'Pemasukan', icon: 'lega:arrow-up', tone: 'green', sign: 1 },
+  expense: { label: 'Pengeluaran', icon: 'lega:arrow-down', tone: 'red', sign: -1 },
+  transfer: { label: 'Pindah', icon: 'lega:swap', tone: 'blue', note: 'bukan pengeluaran' },
+  card_payment: {
+    label: 'Bayar tagihan kartu',
+    icon: 'lega:card',
+    tone: 'grey',
+    note: 'bukan pengeluaran baru',
+  },
+  refund: { label: 'Refund', icon: 'lega:arrow-up', tone: 'green', sign: 1 },
+  reversal: { label: 'Dibalik', icon: 'solar:restart-bold', tone: 'grey' },
 };
 
 /**
- * A transaction's headline amount.
+ * The headline figure.
  *
  * Deliberately the largest single leg rather than a sum: entries sum to
  * zero by construction, so "the amount" is a presentation choice. For a
- * transfer this shows what moved, with the fee visible as its own row
- * elsewhere.
+ * transfer this shows what moved, and the fee stays its own row.
  */
-function headlineAmount(entries) {
+function headline(entries) {
   if (!entries?.length) {
     return 0;
   }
@@ -47,155 +78,233 @@ function headlineAmount(entries) {
   return entries.reduce((best, e) => (Math.abs(e.amount) > Math.abs(best) ? e.amount : best), 0);
 }
 
+/** Groups by calendar day in the browser's zone, newest first. */
+function byDay(rows) {
+  const groups = new Map();
+
+  rows.forEach((row) => {
+    const date = new Date(row.occurred_at);
+    const key = date.toDateString();
+
+    if (!groups.has(key)) {
+      groups.set(key, { date, rows: [], out: 0, in: 0 });
+    }
+
+    const group = groups.get(key);
+    group.rows.push(row);
+
+    const type = TYPES[row.type];
+    const amount = Math.abs(headline(row.entries));
+
+    if (type?.sign === -1) {
+      group.out += amount;
+    }
+    if (type?.sign === 1) {
+      group.in += amount;
+    }
+  });
+
+  return [...groups.values()];
+}
+
+function dayLabel(date) {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) {
+    return 'Hari ini';
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return 'Kemarin';
+  }
+
+  return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+}
+
 // ----------------------------------------------------------------------
 
 export function DataView() {
   const [transactions, setTransactions] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [names, setNames] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [period, setPeriod] = useState('bulan_ini');
+  const [type, setType] = useState(null);
+  const [accountId, setAccountId] = useState(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [rows, accounts] = await Promise.all([transactionsApi.list(100), accountsApi.list()]);
+      const [rows, wallets] = await Promise.all([
+        transactionsApi.list({ limit: 100, period, type, accountId }),
+        accountsApi.list(),
+      ]);
       setTransactions(rows);
-      setNames(Object.fromEntries(accounts.map((a) => [a.id, a.name])));
+      setAccounts(wallets);
+      setNames(Object.fromEntries(wallets.map((account) => [account.id, account.name])));
       setError(null);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period, type, accountId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  const renderBody = () => {
-    if (loading) {
-      return <LinearProgress sx={{ m: 2 }} />;
-    }
-
-    if (error) {
-      return <SurfaceEmpty icon="solar:danger-triangle-bold" title="Gagal memuat" body={error} />;
-    }
-
-    if (!transactions.length) {
-      return (
-        <SurfaceEmpty
-          icon="solar:bill-list-bold"
-          title="Belum ada transaksi"
-          body="Catat yang pertama lewat chat, misalnya: “kemarin makan 35rb pakai BCA”."
-        />
-      );
-    }
-
-    return (
-      <Stack sx={{ p: 2, gap: 1.5 }}>
-        {transactions.map((tx) => {
-          const amount = headlineAmount(tx.entries);
-          const accounts = tx.entries
-            .map((e) => names[e.account_id])
-            .filter(Boolean)
-            .join(' → ');
-
-          return (
-            /* Cards, not a table: FR17 requires wide tables to become
-               stacked detail on a phone. */
-            <Card key={tx.id} sx={{ p: 2 }}>
-              <Stack
-                direction="row"
-                sx={{ justifyContent: 'space-between', alignItems: 'flex-start', gap: 2 }}
-              >
-                <Box sx={{ minWidth: 0 }}>
-                  <Stack direction="row" sx={{ gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <Typography variant="subtitle2">{TYPE_LABELS[tx.type] ?? tx.type}</Typography>
-                    {tx.type === 'reversal' && (
-                      <Label color="warning" variant="soft">
-                        pembatalan
-                      </Label>
-                    )}
-                  </Stack>
-
-                  <Typography variant="caption" sx={{ color: 'text.disabled', display: 'block' }}>
-                    {new Date(tx.occurred_at).toLocaleDateString('id-ID', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
-                  </Typography>
-
-                  {accounts && (
-                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                      {accounts}
-                    </Typography>
-                  )}
-
-                  {(tx.merchant || tx.note || tx.description) && (
-                    <Typography variant="body2" sx={{ mt: 0.5 }}>
-                      {tx.merchant || tx.note || tx.description}
-                    </Typography>
-                  )}
-                </Box>
-
-                <Typography
-                  variant="subtitle2"
-                  sx={(theme) => ({
-                    whiteSpace: 'nowrap',
-                    color:
-                      amount < 0 ? theme.vars.palette.error.main : theme.vars.palette.success.main,
-                  })}
-                >
-                  {formatRupiah(amount, { signed: true })}
-                </Typography>
-              </Stack>
-            </Card>
-          );
-        })}
-      </Stack>
-    );
-  };
+  const days = byDay(transactions);
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
-      <SurfaceHeader
+    <>
+      <BoardTitle
         title="Data"
         action={
-          <Stack direction="row" sx={{ alignItems: 'center', gap: 1.5 }}>
-            <Typography variant="caption" sx={{ color: 'text.disabled' }}>
-              {transactions.length ? `${transactions.length} transaksi` : ''}
-            </Typography>
-
+          <Stack direction="row" sx={{ gap: 1, alignItems: 'center' }}>
             {transactions.length > 0 && (
-              <Button
-                size="small"
-                color="inherit"
+              <Box
+                component="a"
                 /* A plain link, not fetch(): the browser handles the
                    download and the Content-Disposition filename, and the
                    session cookie rides along because it is same-origin. */
-                component="a"
-                href="/api/export/transactions.csv?period=semua"
-                startIcon={<Iconify icon="solar:download-bold" width={18} />}
-                sx={{ minHeight: 44 }}
+                href="/srv/export/transactions.csv?period=semua"
+                sx={{
+                  px: 1.75,
+                  gap: 0.75,
+                  height: 40,
+                  fontSize: 13,
+                  display: 'flex',
+                  fontWeight: 800,
+                  borderRadius: 999,
+                  alignItems: 'center',
+                  bgcolor: 'common.white',
+                  color: 'text.primary',
+                  textDecoration: 'none',
+                }}
               >
+                <Iconify icon="lega:download" width={16} />
                 CSV
-              </Button>
+              </Box>
             )}
           </Stack>
         }
       />
-      <Box
-        sx={(theme) => ({
-          flex: '1 1 auto',
-          minHeight: 0,
-          overflowY: 'auto',
-          bgcolor: varAlpha(theme.vars.palette.grey['500Channel'], 0.04),
-        })}
-      >
-        {renderBody()}
-      </Box>
-    </Box>
+
+      <Stack direction="row" sx={{ px: 2, pb: 1.5, gap: 1, overflowX: 'auto' }}>
+        <FilterChip value={period} onChange={setPeriod} options={PERIODS} />
+        <FilterChip
+          value={accountId}
+          onChange={setAccountId}
+          options={[
+            { value: null, label: 'Semua kantong' },
+            ...accounts.map((account) => ({ value: account.id, label: account.name })),
+          ]}
+        />
+        <FilterChip value={type} onChange={setType} options={TYPE_FILTERS} />
+      </Stack>
+
+      {loading && <LinearProgress />}
+
+      <BoardBody>
+        {error && (
+          <SurfaceEmpty icon="solar:danger-triangle-bold" title="Gagal memuat data" body={error} />
+        )}
+
+        {!error && !loading && transactions.length === 0 && (
+          <SurfaceEmpty
+            icon="lega:list"
+            title="Belum ada transaksi"
+            body="Catat lewat chat atau tombol tengah di bawah. Semuanya muncul di sini."
+          />
+        )}
+
+        {!error &&
+          days.map((day) => (
+            <Box
+              key={day.date.toISOString()}
+              sx={{ gap: 1, display: 'flex', flexDirection: 'column' }}
+            >
+              <Stack
+                direction="row"
+                sx={{ px: 0.5, gap: 2, alignItems: 'baseline', justifyContent: 'space-between' }}
+              >
+                <Typography sx={{ fontSize: 13, fontWeight: 800 }}>{dayLabel(day.date)}</Typography>
+                <Typography sx={{ fontSize: 12, fontWeight: 700, color: 'text.secondary' }}>
+                  {day.out > 0 && `keluar ${formatRupiahPlain(day.out)}`}
+                  {day.out > 0 && day.in > 0 && ' · '}
+                  {day.in > 0 && `masuk ${formatRupiahPlain(day.in)}`}
+                </Typography>
+              </Stack>
+
+              <ListCard>
+                {day.rows.map((row, index) => (
+                  <Box key={row.id}>
+                    {index > 0 && <RowDivider />}
+                    <Row row={row} names={names} />
+                  </Box>
+                ))}
+              </ListCard>
+            </Box>
+          ))}
+
+        {!error && transactions.length > 0 && (
+          <Typography
+            sx={{
+              fontSize: 12,
+              lineHeight: 1.5,
+              fontWeight: 600,
+              textAlign: 'center',
+              color: 'text.secondary',
+            }}
+          >
+            Ekspor ikut filter yang nyala. Satu baris per sisi, jadi transfer tetap utuh.
+          </Typography>
+        )}
+      </BoardBody>
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------
+
+function Row({ row, names }) {
+  const type = TYPES[row.type] ?? { label: row.type, icon: 'lega:list', tone: 'grey' };
+  const amount = headline(row.entries);
+  const reversed = row.type === 'reversal';
+
+  const wallets = row.entries
+    .map((entry) => names[entry.account_id])
+    .filter(Boolean)
+    .join(' → ');
+
+  const title = row.merchant || row.description || type.label;
+  const note = [wallets, type.note].filter(Boolean).join(' · ');
+
+  return (
+    <ListRow
+      href={paths.chat}
+      avatar={<RowAvatar tone={reversed ? 'grey' : type.tone} icon={type.icon} />}
+      title={title}
+      note={note}
+      value={undefined}
+      action={
+        <Money
+          amount={type.sign ? Math.abs(amount) * type.sign : Math.abs(amount)}
+          signed={Boolean(type.sign)}
+          sx={{
+            fontSize: 16,
+            fontWeight: 800,
+            whiteSpace: 'nowrap',
+            ...(reversed && { color: 'text.disabled', textDecoration: 'line-through' }),
+            ...(type.sign === 1 && !reversed && { color: 'primary.dark' }),
+            ...(!type.sign && !reversed && { color: 'text.secondary' }),
+          }}
+        />
+      }
+    />
   );
 }

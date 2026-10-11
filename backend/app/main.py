@@ -29,7 +29,7 @@ from .domain.errors import DomainError
 settings = get_settings()
 
 app = FastAPI(
-    title="Duit Akuh API",
+    title="lega API",
     version="0.1.0",
     description="Ledger and chat orchestration for a personal finance app.",
 )

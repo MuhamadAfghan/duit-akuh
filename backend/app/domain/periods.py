@@ -54,6 +54,28 @@ def _utc(moment: datetime) -> datetime:
     return moment.astimezone(timezone.utc)
 
 
+def as_utc(moment: datetime, zone: ZoneInfo) -> datetime:
+    """Normalise a moment that came from a client, in UTC.
+
+    JSON carries plenty of datetimes with no offset — ``"2027-04-30"``
+    and ``"2026-10-10T14:30:00"`` both parse to a naive value. The
+    storage layer refuses those outright (``app.types.UtcDateTime``),
+    and rightly so: at that depth the instant really is ambiguous.
+
+    Here it is not. A person typing a wall-clock time means their own
+    clock, so reading it in their zone is the answer rather than a
+    guess. That is also what keeps a date-only deadline on the day they
+    typed: midnight in Jakarta is 17:00 UTC the day before, and
+    rendering it back in Jakarta returns the same date.
+
+    An already-aware value is only converted, never reinterpreted.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=zone)
+
+    return _utc(moment)
+
+
 def _day_start(day: date, zone: ZoneInfo) -> datetime:
     """Midnight local, as UTC."""
     return _utc(datetime.combine(day, time.min, tzinfo=zone))

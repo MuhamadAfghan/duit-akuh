@@ -27,7 +27,7 @@ const STICK_THRESHOLD = 80;
  * When a turn arrives while the user is scrolled up, a jump button appears
  * instead — a confirmation card must never land silently off-screen.
  */
-export function ChatThread({ messages, renderCard }) {
+export function ChatThread({ messages, renderCard, footer = null }) {
   const scrollRef = useRef(null);
   const isStuckRef = useRef(true);
 
@@ -74,7 +74,7 @@ export function ChatThread({ messages, renderCard }) {
     } else {
       setShowJump(true);
     }
-  }, [messages]);
+  }, [messages, footer]);
 
   return (
     <Box sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, display: 'flex' }}>
@@ -94,6 +94,8 @@ export function ChatThread({ messages, renderCard }) {
               />
             )
           )}
+
+          {footer}
         </Stack>
       </Scrollbar>
 

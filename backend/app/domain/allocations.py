@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..money import positive_rupiah
+from ..money import format_rupiah, positive_rupiah
 from .errors import AllocationExceedsBalance
 
 
@@ -58,8 +58,9 @@ def check_allocation_fits(
 
     if total > headroom:
         raise AllocationExceedsBalance(
-            f"Alokasi {total} melebihi saldo {headroom} pada akun tersebut. "
-            f"Sisa yang bisa dialokasikan: {max(0, headroom - others)}."
+            f"Alokasi {format_rupiah(total)} melebihi saldo "
+            f"{format_rupiah(headroom)} pada akun tersebut. "
+            f"Sisa yang bisa dialokasikan: {format_rupiah(max(0, headroom - others))}."
         )
 
     return total

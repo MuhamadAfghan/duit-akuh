@@ -1,151 +1,27 @@
+import Box from '@mui/material/Box';
 import Stack from '@mui/material/Stack';
-import Typography from '@mui/material/Typography';
 
 import { formatRupiah } from 'src/utils/format-money';
 
-import { ActionCard } from './action-card';
+import { BoardNote } from '../../common';
+import { TwoSided, DetailRow, ActionCard, ImpactLine } from './action-card';
 
 // ----------------------------------------------------------------------
 
-const TRANSACTION_LABELS = {
-  expense: 'Pengeluaran',
-  income: 'Pemasukan',
-  transfer: 'Transfer',
-  card_payment: 'Bayar kartu',
-  refund: 'Refund',
+const TYPE_KICKERS = {
+  expense: 'PENGELUARAN',
+  income: 'PEMASUKAN',
+  transfer: 'PINDAH KANTONG',
+  card_payment: 'BAYAR TAGIHAN KARTU',
+  refund: 'REFUND',
 };
 
 const ACCOUNT_TYPE_LABELS = {
-  bank: 'Bank',
+  bank: 'Rekening bank',
   ewallet: 'E-wallet',
-  cash: 'Cash',
+  cash: 'Tunai',
   credit_card: 'Kartu kredit',
 };
-
-function Row({ label, value }) {
-  if (value == null || value === '') {
-    return null;
-  }
-
-  return (
-    <Stack direction="row" sx={{ justifyContent: 'space-between', gap: 2 }}>
-      <Typography variant="body2" sx={{ color: 'text.secondary', flexShrink: 0 }}>
-        {label}
-      </Typography>
-      <Typography variant="body2" sx={{ textAlign: 'right', fontWeight: 'fontWeightMedium' }}>
-        {value}
-      </Typography>
-    </Stack>
-  );
-}
-
-// ----------------------------------------------------------------------
-
-/**
- * Describe a draft for the card: a title, a one-line caption, and rows.
- *
- * Driven by `kind` rather than by assuming every draft is a transaction.
- * It was: goals, new wallets and reversals all carry their amount under
- * a different key, so they rendered as "Rp0".
- *
- * `names` maps account ids to names, since payloads identify accounts
- * by id.
- */
-function describe(card, names) {
-  const { payload = {}, kind } = card;
-
-  if (kind === 'goal') {
-    return {
-      title: `Target baru: ${payload.name}`,
-      caption: `Sasaran ${formatRupiah(payload.target_amount ?? 0)}`,
-      rows: [
-        { label: 'Nama', value: payload.name },
-        { label: 'Target', value: formatRupiah(payload.target_amount ?? 0) },
-        {
-          label: 'Tenggat',
-          value: payload.target_date ? payload.target_date.slice(0, 10) : null,
-        },
-        { label: 'Prioritas', value: payload.priority ? String(payload.priority) : null },
-      ],
-    };
-  }
-
-  if (kind === 'allocation') {
-    return {
-      title: `Alokasi ${formatRupiah(payload.amount ?? 0)}`,
-      caption: 'Menandai saldo yang sudah ada — tidak memindahkan uang.',
-      rows: [
-        { label: 'Target', value: payload.goal_name },
-        { label: 'Dari kantong', value: payload.account_name ?? names[payload.account_id] },
-        { label: 'Jumlah', value: formatRupiah(payload.amount ?? 0) },
-      ],
-    };
-  }
-
-  if (kind === 'budget') {
-    return {
-      title: `Budget ${payload.category}`,
-      caption: 'Batas rencana belanja per bulan — bukan saldo.',
-      rows: [
-        { label: 'Kategori', value: payload.category },
-        { label: 'Batas per bulan', value: formatRupiah(payload.amount ?? 0) },
-      ],
-    };
-  }
-
-  if (kind === 'account') {
-    return {
-      title: `Kantong baru: ${payload.name}`,
-      caption: null,
-      rows: [
-        { label: 'Jenis', value: ACCOUNT_TYPE_LABELS[payload.type] ?? payload.type },
-        {
-          label: 'Saldo awal',
-          value: payload.opening_balance ? formatRupiah(payload.opening_balance) : null,
-        },
-        {
-          label: 'Limit kredit',
-          value: payload.credit_limit ? formatRupiah(payload.credit_limit) : null,
-        },
-      ],
-    };
-  }
-
-  if (kind === 'reversal') {
-    return {
-      title: 'Batalkan transaksi',
-      caption: 'Transaksi aslinya tetap tersimpan; pembatalan dicatat terpisah.',
-      rows: [],
-    };
-  }
-
-  // A transaction. The type lives on the payload here, not on `kind`.
-  const type = payload.type ?? kind;
-
-  return {
-    title: `${TRANSACTION_LABELS[type] ?? type} ${formatRupiah(payload.amount ?? 0)}`,
-    caption: null,
-    rows: [
-      { label: 'Jenis', value: TRANSACTION_LABELS[type] ?? type },
-      { label: 'Nominal', value: formatRupiah(payload.amount ?? 0) },
-      { label: 'Dari', value: names[payload.from_account_id] },
-      {
-        label: 'Ke',
-        value: names[payload.to_account_id] ?? names[payload.card_account_id],
-      },
-      { label: 'Kategori', value: payload.category },
-      {
-        label: 'Tanggal',
-        value: payload.occurred_at ? payload.occurred_at.slice(0, 10) : 'Hari ini',
-      },
-      { label: 'Merchant', value: payload.merchant },
-      { label: 'Catatan', value: payload.note },
-      // Fees are a separate expense, never folded into the amount
-      // (FR02/AC02), so they get their own row.
-      { label: 'Biaya admin', value: payload.fee ? formatRupiah(payload.fee) : null },
-    ],
-  };
-}
 
 /** Backend draft statuses, mapped to what ActionCard renders. */
 const CARD_STATUS = {
@@ -165,29 +41,226 @@ const SETTLED_MESSAGES = {
 
 // ----------------------------------------------------------------------
 
+/**
+ * Turns a draft into the card its kind deserves.
+ *
+ * Driven by `kind` rather than by assuming every draft is a
+ * transaction: goals, wallets and reversals carry their amount under a
+ * different key and once rendered as "Rp0".
+ *
+ * Each branch also carries the one sentence that stops the entry being
+ * misread — a transfer is not spending, a card bill is not a second
+ * expense, an opening balance is not income, a budget is not money set
+ * aside. Those are the rules the ledger enforces, said where somebody
+ * is about to act on them.
+ */
+function describe(card, names) {
+  const { payload = {}, kind } = card;
+  const impact = card.impact ?? [];
+
+  if (kind === 'goal') {
+    return {
+      kicker: 'TARGET BARU',
+      amount: payload.target_amount ?? 0,
+      subtitle: payload.name,
+      confirmLabel: 'Geser untuk bikin target',
+      body: (
+        <Stack sx={{ gap: 1 }}>
+          <DetailRow
+            label="Tenggat"
+            value={payload.target_date ? payload.target_date.slice(0, 10) : 'Belum ditentukan'}
+          />
+          <DetailRow label="Prioritas" value={payload.priority} />
+        </Stack>
+      ),
+    };
+  }
+
+  if (kind === 'allocation') {
+    return {
+      kicker: 'SISIHKAN KE TARGET',
+      amount: payload.amount ?? 0,
+      subtitle: names[payload.account_id],
+      confirmLabel: 'Geser untuk sisihkan',
+      body: (
+        <Stack sx={{ gap: 1.5 }}>
+          <Impacts impact={impact} />
+          <BoardNote>
+            Uangnya cuma ditandai supaya nggak kepakai. Saldo kantongnya tetap, dan total aset lu
+            nggak naik, nggak turun.
+          </BoardNote>
+        </Stack>
+      ),
+    };
+  }
+
+  if (kind === 'budget') {
+    const previous = payload.previous_amount ?? payload.current_amount;
+
+    return {
+      kicker: `BUDGET · ${(payload.category ?? '').toUpperCase()}`,
+      amount: payload.amount ?? 0,
+      subtitle: 'Per bulan',
+      confirmLabel: 'Geser untuk atur budget',
+      body: (
+        <Stack sx={{ gap: 1.5 }}>
+          {Number.isInteger(previous) && (
+            <DetailRow label="Limit sekarang" value={formatRupiah(previous)} />
+          )}
+          <BoardNote>
+            Budget itu rencana, bukan uang. Angka <strong>bebas pakai</strong> lu nggak berubah
+            karena ini.
+          </BoardNote>
+        </Stack>
+      ),
+    };
+  }
+
+  if (kind === 'account') {
+    return {
+      kicker: 'KANTONG BARU',
+      amount: payload.opening_balance ?? 0,
+      subtitle: `${payload.name} · ${ACCOUNT_TYPE_LABELS[payload.type] ?? payload.type}`,
+      confirmLabel: 'Geser untuk simpan kantong',
+      body: (
+        <Stack sx={{ gap: 1.5 }}>
+          {payload.credit_limit != null && (
+            <DetailRow label="Limit kartu" value={formatRupiah(payload.credit_limit)} />
+          )}
+          <BoardNote>
+            Saldo awal <strong>bukan pemasukan</strong>. Ini titik mulai, jadi laporan bulan ini
+            nggak kelihatan seperti lu baru dapat uang sebanyak itu.
+          </BoardNote>
+        </Stack>
+      ),
+    };
+  }
+
+  if (kind === 'reversal') {
+    return {
+      kicker: 'BATALKAN TRANSAKSI',
+      amount: payload.amount ?? null,
+      tone: 'bad',
+      subtitle: payload.description ?? payload.summary,
+      destructive: true,
+      confirmLabel: 'Batalkan',
+      body: (
+        <BoardNote tone="bad">
+          Catatan lama tetap ada, ditambah catatan pembalik. Riwayatnya bisa ditelusuri, dan nggak
+          ada yang hilang diam-diam.
+        </BoardNote>
+      ),
+    };
+  }
+
+  // A transaction. The type lives on the payload here, not on `kind`.
+  const type = payload.type ?? kind;
+  const amount = payload.amount ?? 0;
+
+  if (type === 'transfer') {
+    return {
+      kicker: payload.fee ? 'PINDAH KANTONG + ADMIN' : 'PINDAH KANTONG',
+      amount: null,
+      confirmLabel: 'Geser untuk simpan',
+      body: (
+        <Stack sx={{ gap: 1.5 }}>
+          <TwoSided
+            from={{ name: names[payload.from_account_id], amount }}
+            to={{ name: names[payload.to_account_id], amount }}
+          />
+
+          {payload.fee > 0 && (
+            <DetailRow label="Biaya admin (pengeluaran)" value={formatRupiah(payload.fee)} />
+          )}
+
+          <BoardNote tone="info">
+            Total uang lu <strong>tidak berubah</strong>. Ini pindah tempat, jadi nggak masuk
+            laporan pengeluaran
+            {payload.fee > 0 ? ' — cuma biaya adminnya yang dihitung.' : '.'}
+          </BoardNote>
+        </Stack>
+      ),
+    };
+  }
+
+  if (type === 'card_payment') {
+    return {
+      kicker: 'BAYAR TAGIHAN KARTU',
+      amount,
+      confirmLabel: 'Geser untuk simpan',
+      body: (
+        <Stack sx={{ gap: 1.5 }}>
+          <Impacts impact={impact} />
+          <BoardNote tone="warn">
+            Belanjanya sudah dihitung waktu digesek. Pembayaran ini <strong>bukan</strong>{' '}
+            pengeluaran baru.
+          </BoardNote>
+        </Stack>
+      ),
+    };
+  }
+
+  const incoming = type === 'income' || type === 'refund';
+  const card_ = names[payload.from_account_id];
+
+  return {
+    kicker: [TYPE_KICKERS[type] ?? type, payload.category?.toUpperCase()]
+      .filter(Boolean)
+      .join(' · '),
+    amount: incoming ? amount : -amount,
+    amountSigned: true,
+    tone: incoming ? 'good' : 'neutral',
+    subtitle: [card_ ?? names[payload.to_account_id], payload.merchant].filter(Boolean).join(' · '),
+    confirmLabel: 'Geser untuk simpan',
+    body: (
+      <Stack sx={{ gap: 1.5 }}>
+        <Impacts impact={impact} />
+        <Stack sx={{ gap: 1 }}>
+          <DetailRow
+            label="Tanggal"
+            value={payload.occurred_at ? payload.occurred_at.slice(0, 10) : 'Hari ini'}
+          />
+          <DetailRow label="Catatan" value={payload.note} />
+        </Stack>
+      </Stack>
+    ),
+  };
+}
+
+function Impacts({ impact }) {
+  if (!impact.length) {
+    return null;
+  }
+
+  return (
+    <Stack sx={{ gap: 0.75 }}>
+      {impact.map((row) => (
+        <ImpactLine key={row.account} label={row.account} before={row.before} after={row.after} />
+      ))}
+    </Stack>
+  );
+}
+
+// ----------------------------------------------------------------------
+
 export function DraftCard({ card, names = {}, onConfirm, onCancel }) {
-  const { title, caption, rows } = describe(card, names);
+  const described = describe(card, names);
 
   return (
     <ActionCard
-      title={title}
-      caption={caption}
-      impact={(card.impact ?? []).map((row) => ({
-        label: row.account,
-        before: row.before,
-        after: row.after,
-      }))}
+      kicker={described.kicker}
+      amount={described.amount}
+      amountSigned={described.amountSigned}
+      subtitle={described.subtitle}
+      tone={described.tone}
+      destructive={described.destructive}
+      confirmLabel={described.confirmLabel}
       status={CARD_STATUS[card.status] ?? 'draft'}
       statusMessage={SETTLED_MESSAGES[card.status]}
-      confirmLabel="Simpan"
       onConfirm={onConfirm}
       onCancel={onCancel}
     >
-      <Stack spacing={1}>
-        {rows.map((row) => (
-          <Row key={row.label} label={row.label} value={row.value} />
-        ))}
-      </Stack>
+      <Box sx={{ pb: 0.5 }}>{described.body}</Box>
     </ActionCard>
   );
 }

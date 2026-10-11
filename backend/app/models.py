@@ -436,6 +436,56 @@ class LoginAttempt(Base):
     )
 
 
+class PasswordResetRequest(Base):
+    """Every password-reset request ever made, answered or not.
+
+    One table, one story. A row is written **even for an address with no
+    account**, for two reasons: the endpoint has to answer identically
+    either way, so the page cannot be used to find out who has an
+    account here, and the throttle needs something to count. Only rows
+    belonging to a real user carry a token.
+
+    The token is stored as a hash, like a session token and for the same
+    reason: a database leak must not hand anyone a working reset link.
+    """
+
+    __tablename__ = "password_reset_requests"
+    __table_args__ = (Index("ix_password_reset_email_time", "email", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=new_uuid)
+
+    #: Stored lowercased. Not a foreign key, for the same reason as
+    #: LoginAttempt.email: unknown addresses have to be recorded too.
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+    #: SHA-256 of the raw token. Null when no token was issued, which is
+    #: every request for an address that has no account.
+    token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+    #: Stamped when the token is spent, and also when a newer request
+    #: supersedes it. Either way the row can never be redeemed again.
+    used_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, nullable=False, default=utcnow, server_default=func.now()
+    )
+
+    def is_redeemable(self, now: datetime) -> bool:
+        return (
+            self.token_hash is not None
+            and self.used_at is None
+            and self.expires_at is not None
+            and self.expires_at > now
+        )
+
+
 class MessageRole(str, enum.Enum):
     USER = "user"
     ASSISTANT = "assistant"

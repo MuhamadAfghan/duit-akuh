@@ -10,6 +10,7 @@ import { DraftCard } from '../cards';
 import { ChatHeader } from '../chat-header';
 import { ChatThread } from '../chat-thread';
 import { ChatComposer } from '../chat-composer';
+import { WalletSuggestions, FIRST_RUN_GREETING } from '../first-run';
 
 // ----------------------------------------------------------------------
 
@@ -84,6 +85,12 @@ export function ChatView() {
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState('');
   const [accountNames, setAccountNames] = useState({});
+  //: null until the wallet list has actually been read. "Not loaded yet"
+  //: and "none at all" lead to different screens, so they cannot share
+  //: a value.
+  const [walletCount, setWalletCount] = useState(null);
+  const [freeToSpend, setFreeToSpend] = useState(null);
+  const [prefill, setPrefill] = useState(null);
 
   // Guards against a double tap firing two confirmations before the
   // first response lands. The backend is idempotent regardless; this
@@ -113,8 +120,34 @@ export function ChatView() {
   useEffect(() => {
     accountsApi
       .list()
-      .then((rows) => setAccountNames(Object.fromEntries(rows.map((a) => [a.id, a.name]))))
+      .then((rows) => {
+        setAccountNames(Object.fromEntries(rows.map((a) => [a.id, a.name])));
+        setWalletCount(rows.length);
+      })
       .catch(() => {});
+  }, [messages]);
+
+  // The one number the whole app exists to produce, kept in view while
+  // you type. Re-read after every turn because a confirmed draft moves
+  // it. A failure just hides the chip: it is context, not content.
+  useEffect(() => {
+    accountsApi
+      .summary()
+      .then((data) => {
+        const value = data?.free_to_spend;
+        // formatRupiah throws on a non-integer by design, which is
+        // right for a card but wrong for a header chip: it would take
+        // the whole thread down over a decoration.
+        if (Number.isInteger(value)) {
+          setFreeToSpend(value);
+          return;
+        }
+        if (value != null) {
+          console.error('free_to_spend bukan bilangan bulat:', value);
+        }
+        setFreeToSpend(null);
+      })
+      .catch(() => setFreeToSpend(null));
   }, [messages]);
 
   const handleSend = useCallback(
@@ -242,11 +275,44 @@ export function ChatView() {
     [handleConfirm, handleCancel, accountNames]
   );
 
+  // No wallet exists yet, so the thread opens on board "Mulai": the
+  // usual greeting offers to record spending from accounts that are not
+  // there. `noWallet` stays true until one is saved — the header and
+  // the placeholder keep saying what is missing — while the chips only
+  // stand in for a first message, and go once one has been sent.
+  const noWallet = walletCount === 0 && messages[0]?.id === WELCOME.id;
+  const untouched = noWallet && messages.length === 1;
+
+  const thread = noWallet ? [...FIRST_RUN_GREETING, ...messages.slice(1)] : messages;
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0 }}>
-      <ChatHeader status={status} />
-      <ChatThread messages={messages} renderCard={renderCard} />
-      <ChatComposer onSend={handleSend} disabled={sending} />
+      <ChatHeader
+        status={status}
+        freeToSpend={freeToSpend}
+        hint={noWallet ? 'Kantong pertama' : null}
+      />
+
+      <ChatThread
+        messages={thread}
+        renderCard={renderCard}
+        footer={
+          untouched ? (
+            <WalletSuggestions
+              disabled={sending}
+              onPick={(name) => setPrefill({ text: name, at: Date.now() })}
+            />
+          ) : null
+        }
+      />
+
+      <ChatComposer
+        onSend={handleSend}
+        disabled={sending}
+        prefill={prefill}
+        suggestions={noWallet ? [] : undefined}
+        placeholder={noWallet ? 'Kantong lain? Tulis di sini…' : undefined}
+      />
     </Box>
   );
 }

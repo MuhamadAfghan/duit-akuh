@@ -294,6 +294,27 @@ def test_negative_balance_supports_no_allocation():
         check_allocation_fits(account_id=BANK, account_balance=-50_000, existing=[], new_amount=1)
 
 
+def test_the_refusal_says_the_amounts_the_way_the_app_writes_money():
+    """The message is shown to the user, so it reads like the rest.
+
+    "Alokasi 5000000 melebihi saldo 3628050" is a developer's string.
+    Nothing else in the product prints a bare integer of rupiah.
+    """
+    with pytest.raises(AllocationExceedsBalance) as refusal:
+        check_allocation_fits(
+            account_id=BANK,
+            account_balance=3_628_050,
+            existing=[],
+            new_amount=5_000_000,
+        )
+
+    message = str(refusal.value)
+
+    assert "Rp5.000.000" in message
+    assert "Rp3.628.050" in message
+    assert "5000000" not in message
+
+
 # ----------------------------------------------------------------------
 # Corrections and refunds (FR02, AC08 arithmetic half)
 # ----------------------------------------------------------------------

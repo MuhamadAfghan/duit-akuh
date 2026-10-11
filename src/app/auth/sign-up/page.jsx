@@ -4,7 +4,7 @@ import { SignUpView } from 'src/auth/view/session';
 
 // ----------------------------------------------------------------------
 
-export const metadata = { title: `Sign up | Jwt - ${CONFIG.appName}` };
+export const metadata = { title: `Daftar - ${CONFIG.appName}` };
 
 export default function Page() {
   return <SignUpView />;

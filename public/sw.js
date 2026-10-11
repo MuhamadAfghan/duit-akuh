@@ -21,8 +21,14 @@ const OFFLINE_URL = '/offline.html';
 /** Paths that only ever hold immutable or public static files. */
 const STATIC_PREFIXES = ['/_next/static/', '/icons/', '/fonts/', '/assets/', '/logo/'];
 
-/** Never touched by the cache, under any circumstances. */
-const NEVER_CACHE_PREFIXES = ['/api/', '/auth/'];
+/**
+ * Never touched by the cache, under any circumstances.
+ *
+ * `/srv/` is the backend proxy (see the rewrite in next.config.mjs);
+ * `/auth/` is the sign-in pages. Keep this in step with BASE in
+ * src/lib/api.js.
+ */
+const NEVER_CACHE_PREFIXES = ['/srv/', '/auth/'];
 
 const isStatic = (pathname) => STATIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 

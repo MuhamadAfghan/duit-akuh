@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from ..domain.errors import AllocationExceedsBalance, DomainError
 from ..domain.goals import plan_against_capacity
+from ..domain.periods import as_utc, get_zone
 from ..models import Goal
 from ..services import goals as goals_service
 from .deps import CurrentUser, DbSessionDep
@@ -122,7 +123,13 @@ def create_goal(body: GoalCreateIn, user: CurrentUser, db: DbSessionDep) -> Goal
         user_id=user.id,
         name=body.name,
         target_amount=body.target_amount,
-        target_date=body.target_date,
+        # "2027-04-30" parses to a naive value; read as the owner's own
+        # midnight it stays the 30th when rendered back to them.
+        target_date=(
+            as_utc(body.target_date, get_zone(user.timezone))
+            if body.target_date is not None
+            else None
+        ),
         priority=body.priority,
     )
 

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.domain.periods import PeriodError, get_zone, month_period, resolve_period
+from app.domain.periods import PeriodError, as_utc, get_zone, month_period, resolve_period
 
 JAKARTA = "Asia/Jakarta"
 WIB = ZoneInfo(JAKARTA)
@@ -176,3 +176,37 @@ def test_all_time_is_unbounded_so_a_future_date_is_not_hidden():
 
     assert period.contains(datetime(1999, 1, 1, tzinfo=timezone.utc))
     assert period.contains(datetime(2030, 6, 1, tzinfo=timezone.utc))
+
+
+# ----------------------------------------------------------------------
+# as_utc — reading a client's offset-less datetime
+
+
+def test_a_naive_value_is_read_as_the_given_zone():
+    assert as_utc(datetime(2027, 4, 30), WIB) == datetime(2027, 4, 29, 17, 0, tzinfo=timezone.utc)
+
+
+def test_a_naive_wall_clock_keeps_its_hour_locally():
+    """The sharp case.
+
+    A date alone survives either reading, but a time does not: taken as
+    UTC, 14:30 becomes half past nine at night for the person who typed
+    half past two.
+    """
+    stored = as_utc(datetime(2026, 10, 10, 14, 30), WIB)
+
+    assert stored.astimezone(WIB).hour == 14
+    assert stored.astimezone(WIB).date() == date(2026, 10, 10)
+
+
+def test_an_aware_value_is_converted_not_reinterpreted():
+    nine_utc = datetime(2026, 10, 10, 9, 0, tzinfo=timezone.utc)
+
+    assert as_utc(nine_utc, WIB) == nine_utc
+
+
+def test_an_aware_value_in_another_zone_keeps_its_instant():
+    tokyo = ZoneInfo("Asia/Tokyo")
+    noon_in_tokyo = datetime(2026, 10, 10, 12, 0, tzinfo=tokyo)
+
+    assert as_utc(noon_in_tokyo, WIB) == datetime(2026, 10, 10, 3, 0, tzinfo=timezone.utc)

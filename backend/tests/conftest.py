@@ -139,6 +139,7 @@ def reset_tables():
             Entry,
             Goal,
             LoginAttempt,
+            PasswordResetRequest,
             Session,
             Transaction,
             User,
@@ -162,6 +163,7 @@ def reset_tables():
                 Account,
                 Session,
                 LoginAttempt,
+                PasswordResetRequest,
                 User,
             ):
                 cleanup.query(model).delete()

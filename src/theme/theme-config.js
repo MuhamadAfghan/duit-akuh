@@ -18,20 +18,35 @@ export const themeConfig = {
   /** **************************************
    * Typography
    *************************************** */
+  /**
+   * Plus Jakarta Sans stands in for Maison Neue, the typeface Gojek's
+   * Asphalt uses and which is licensed. It is a geometric grotesque
+   * from Tokotype, drawn for Jakarta's city identity, and it is the
+   * closest free match in both proportion and temperament.
+   */
   fontFamily: {
-    primary: 'Public Sans Variable',
+    primary: 'Plus Jakarta Sans Variable',
     secondary: 'Barlow',
   },
   /** **************************************
    * Palette
    *************************************** */
   palette: {
+    /**
+     * lega green. Deliberately not Gojek's #00AA13: the interface
+     * borrows how Asphalt is put together, but a brand colour is not a
+     * pattern to borrow.
+     *
+     * `main` on white is 3.6:1 — fine for large text, icons and fills,
+     * short of AA for body copy. Anything carrying a sentence in white
+     * uses ink, and text on `lighter` uses `dark` (6.6:1).
+     */
     primary: {
-      lighter: '#C8FAD6',
-      light: '#5BE49B',
-      main: '#00A76F',
-      dark: '#007867',
-      darker: '#004B50',
+      lighter: '#D9F3E6',
+      light: '#5FD3A2',
+      main: '#009A5B',
+      dark: '#006B45',
+      darker: '#00482F',
       contrastText: '#FFFFFF',
     },
     secondary: {
@@ -74,17 +89,29 @@ export const themeConfig = {
       darker: '#7A0916',
       contrastText: '#FFFFFF',
     },
+    /**
+     * The neutrals from the approved design boards, not Minimal's.
+     *
+     * They are load-bearing rather than cosmetic: `text.primary` is
+     * grey[800], `text.secondary` grey[600], `text.disabled` grey[500]
+     * and `background.neutral` grey[200] (see theme/core/palette.js),
+     * so getting these right is what makes every screen match the
+     * boards without each one restating a hex.
+     *
+     * 800 is the ink the boards use for headings, dark cards and the
+     * floating tab bar; 100 is the canvas every surface sits on.
+     */
     grey: {
-      50: '#FCFDFD',
-      100: '#F9FAFB',
-      200: '#F4F6F8',
-      300: '#DFE3E8',
-      400: '#C4CDD5',
-      500: '#919EAB',
-      600: '#637381',
-      700: '#454F5B',
-      800: '#1C252E',
-      900: '#141A21',
+      50: '#FAFBFB',
+      100: '#F4F5F6',
+      200: '#EEEFF0',
+      300: '#E0E2E4',
+      400: '#C9CDD0',
+      500: '#8A9298',
+      600: '#5A6166',
+      700: '#3A4247',
+      800: '#0B0D0E',
+      900: '#000000',
     },
     common: {
       black: '#000000',
