@@ -1,4 +1,4 @@
-# Duit Akuh — backend
+# lega — backend
 
 FastAPI ledger for the personal finance app, on PostgreSQL locally and
 MySQL/MariaDB in production. Requirements
@@ -74,7 +74,7 @@ Requires Python 3.11+ (developed on 3.12).
 
 ## Database
 
-Two engines are supported, and the suite passes on both (354 tests
+Two engines are supported, and the suite passes on both (394 tests
 each). `app/types.py` is the only place that knows the difference — read
 its module docstring before changing a column type.
 
@@ -150,14 +150,14 @@ before 10.7, `Identity()` generating nothing (hence the explicit
 `GET /health` answers without touching the database — a health check that
 fails on a slow query causes restart loops under load.
 
-The browser never calls this port directly. It calls `/api/*` on the
+The browser never calls this port directly. It calls `/srv/*` on the
 Next.js origin, which proxies here, because the session cookie is
 `SameSite=Lax` and would not survive a cross-origin call.
 
 ## Tests
 
 ```sh
-.venv/Scripts/python -m pytest                      # 354 tests
+.venv/Scripts/python -m pytest                      # 394 tests
 .venv/Scripts/python -m pytest -m "not integration" # pure rules, no database
 ```
 

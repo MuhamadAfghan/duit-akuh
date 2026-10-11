@@ -8,9 +8,25 @@ Web pencatatan keuangan pribadi berbasis AI, for Indonesian users (IDR, Bahasa I
 
 Requirements: **`docs/PRD.md` (v1.3) is the source of truth.** It defines FR01–FR18 and AC01–AC22 — cite those IDs when implementing or testing. The `PRD_Keuangan_AI_Web_v1.docx` still at the repo root is the superseded **v1.1** and should not be read; v1.3 adds the AI service spec (section 13) and the PWA/mobile mandate (section 12).
 
-**The product is chat-first and mobile-first.** One persistent conversation is the main surface and must be able to start _and finish_ every feature in a release (FR14). The dashboard is a companion view over the same data, not the primary UI. A mobile-first **PWA is mandatory for MVP** (FR16) with bottom tabs Chat / Ringkasan / Data; phone is the primary device, desktop merely supported. The current codebase reflects none of this yet — see "Current state vs. the PRD".
+**The product is chat-first and mobile-first.** One persistent conversation is the main surface and must be able to start _and finish_ every feature in a release (FR14). The dashboard is a companion view over the same data, not the primary UI. A mobile-first **PWA is mandatory for MVP** (FR16); phone is the primary device, desktop merely supported. The shipped shell is a floating five-slot bar — Chat · Ringkasan · **+** · Kantong · Data — where the centre button is manual entry.
 
-The codebase is the **Minimal UI v7.7.0 `starter-next-js`** template (commercial MUI admin kit), copied to the repo root and renamed to `duit-akuh` (the PRD leaves the product name undecided). It is a starter: the dashboard pages are intentionally blank placeholders (`BlankView`) waiting to be replaced with real features.
+The product is called **lega**. The brand green is `#009A5B`, the
+typeface Plus Jakarta Sans, and the mark a spirit level — see
+`src/theme/theme-config.js`, which carries the whole palette. The repo
+directory and the npm package are still `duit-akuh`/`lega` respectively;
+nothing user-facing says "Duit Akuh" any more.
+
+**The approved design boards are the specification.** Twenty artboards
+cover every screen, down to the hex values and the nav's exact
+measurements, and the shipped UI is built from them rather than from
+MUI defaults. Building a surface "from memory" is how this went wrong
+once already. The boards live in the canvas artifact; their vocabulary
+is factored into `src/sections/common/board.jsx`, which is where a
+screen's pieces come from.
+
+The codebase started as the **Minimal UI v7.7.0 `starter-next-js`**
+template (commercial MUI admin kit). Most of it has been replaced; what
+remains of the starter is listed under "Known gaps".
 
 ## Domain invariants (from the PRD)
 
@@ -84,7 +100,9 @@ npm run fix:all      # lint:fix + fm:fix
 npm run clean        # rm -rf node_modules .next out dist build
 ```
 
-There is **no test runner configured** — no jest/vitest/playwright dependency or test script exists. If tests are needed, the harness has to be added first.
+The frontend has **no test runner** — no jest/vitest/playwright dependency
+or test script exists, so verifying a React change means `npm run lint`,
+`npm run build`, and looking at it. The backend has pytest; see below.
 
 Requires Node >=22.12 (`engines`). `package-lock.json` and `yarn.lock` are both present; this project was installed with **npm** — stay on npm so the lockfiles don't diverge.
 
@@ -95,23 +113,36 @@ Requires Node >=22.12 (`engines`). `package-lock.json` and `yarn.lock` are both 
 `src/app/**/page.jsx` files are deliberately thin: they export `metadata` and render a view component. All real UI lives in `src/sections/<feature>/`. Follow this split when adding pages.
 
 ```jsx
-// src/app/dashboard/page.jsx
-export const metadata = { title: `Dashboard - ${CONFIG.appName}` };
+// src/app/(app)/target/page.jsx
+export const metadata = { title: `Target - ${CONFIG.appName}` };
 export default function Page() {
-  return <BlankView title="Page one" />;
+  return <TargetView />;
 }
 ```
 
-Route protection and chrome are applied in the segment `layout.jsx`, not in pages — `src/app/dashboard/layout.jsx` wraps children in `AuthGuard` + `DashboardLayout`, auth pages wrap in `GuestGuard` + `AuthSplitLayout`.
+Route protection and chrome are applied in the segment `layout.jsx`, not
+in pages: `src/app/(app)/layout.jsx` wraps the eight app surfaces in
+`AuthGuard` + `AppShell`, and `src/app/auth/layout.jsx` wraps the five
+auth screens in `GuestGuard` + a centred column. Both are one layout for
+the whole segment on purpose — the guard used to be copied per page,
+which is how a sixth screen could ship with none.
 
 ### Central config: `src/global-config.js`
 
-`CONFIG` is the single switchboard for app name, server URL, and auth. Two fields change app-wide behavior:
+`CONFIG` is the single switchboard for app name and auth.
 
-- `CONFIG.auth.method` — `'jwt' | 'amplify' | 'firebase' | 'supabase' | 'auth0'`. `AuthGuard` picks its sign-in redirect from this. Only the **jwt** provider is actually implemented in this starter (`src/auth/context/jwt/`); the other paths exist in `src/routes/paths.js` but have no view or provider here.
-- `CONFIG.auth.skip` — when `true`, `src/app/dashboard/layout.jsx` renders the dashboard without `AuthGuard`. Use this to work on UI without a backend.
+- `CONFIG.auth.method` is `'session'` — our own email + password against
+  the FastAPI backend (`src/auth/context/session/`). The template's
+  `jwt`, `amplify`, `firebase`, `supabase` and `auth0` blocks are still
+  in the file and configure nothing; no provider for them exists here.
+- `CONFIG.auth.skip` is a template leftover that only the dead
+  `/dashboard` segment reads. It does **not** bypass the real app's
+  guard.
 
-`CONFIG.serverUrl` comes from `NEXT_PUBLIC_SERVER_URL` in `.env`, which **still points at the vendor's demo API** (`api-dev-minimal-v700.pages.dev`). Auth calls (`/api/auth/me`, `/api/auth/sign-in`) go there via `src/lib/axios.js`. Replace this with the real backend before building features that persist data.
+There is no `serverUrl` in play. The browser calls `/srv/*` on its own
+origin and `next.config.mjs` rewrites that to `BACKEND_URL`; the
+template's `src/lib/axios.js` is unused, because a Bearer-token instance
+is the wrong shape for an httpOnly cookie.
 
 ### Theme pipeline
 
@@ -149,15 +180,29 @@ const methods = useForm({ resolver: zodResolver(Schema), defaultValues });
 </Form>;
 ```
 
-`Field` (`src/components/hook-form/fields.jsx`) is the full registry of available inputs. `schemaUtils` provides shared zod validators. `src/auth/view/jwt/jwt-sign-in-view.jsx` is the reference implementation.
+`Field` (`src/components/hook-form/fields.jsx`) is the full registry of
+available inputs. `schemaUtils` provides shared zod validators.
+`src/auth/view/session/sign-in-view.jsx` is the reference
+implementation, and the auth screens wrap `Field` in their own
+`AuthField` (`src/auth/components/auth-kit.jsx`) so all five look alike.
+
+Not every form uses it. The money surfaces — manual entry, the
+allocation sheet — are keypads and chips rather than labelled inputs,
+because that is what the boards specify for a phone.
 
 ### Routing
 
 All paths are centralized in `src/routes/paths.js` — add new routes there and reference `paths.*` rather than hardcoding strings. Navigate with the re-exported hooks from `src/routes/hooks` (not `next/navigation` directly) and link with `RouterLink` from `src/routes/components`.
 
-`next.config.mjs` sets `trailingSlash: true`, so `/dashboard` 308-redirects to `/dashboard/`.
+`next.config.mjs` sets `trailingSlash: true`, so `/target` 308-redirects
+to `/target/`. That also means every in-app link is a **full document
+navigation**, not a client-side route change — worth knowing before
+assuming state survives a tab tap.
 
-Sidebar navigation is data-driven: edit the `navData` array in `src/layouts/nav-config-dashboard.jsx` (supports `subheader` groups and nested `children`). The account menu and workspace switcher are separate datasets — `_account` in `nav-config-account.jsx` and `_workspaces` in `nav-config-workspace.jsx`. Nav icons resolve from `public/assets/icons/navbar/*.svg` (27 available) through the local `icon()` helper.
+The live navigation is `appTabs` in `src/layouts/app/nav-config-app.jsx`:
+five slots, the middle one a circular link to manual entry. The
+template's `nav-config-dashboard.jsx`, `nav-config-account.jsx` and
+`nav-config-workspace.jsx` drive the dead `/dashboard` segment only.
 
 ### Imports are lint-enforced in a non-obvious way
 
@@ -184,24 +229,57 @@ The MVP is largely built: a double-entry ledger, auth, the chat orchestrator wit
 Stack decisions already made (2026-10-10):
 
 - **Backend: FastAPI**, per the PRD's recommendation — a separate service in `backend/`. The ledger foundation exists; see `backend/README.md`.
-- **Database: PostgreSQL locally, MySQL/MariaDB in production.** The PRD asks for PostgreSQL and it remains the better fit for this schema, but the cPanel host the app is deployed to has no PostgreSQL at all (`uapi Postgresql` answers "This server does not support this functionality"), only MariaDB 10.6. `backend/app/types.py` is what keeps the two equivalent — read it before touching a column type. The full suite passes on both (354 tests each).
+- **Database: PostgreSQL locally, MySQL/MariaDB in production.** The PRD asks for PostgreSQL and it remains the better fit for this schema, but the cPanel host the app is deployed to has no PostgreSQL at all (`uapi Postgresql` answers "This server does not support this functionality"), only MariaDB 10.6. `backend/app/types.py` is what keeps the two equivalent — read it before touching a column type. The full suite passes on both.
 - **Auth: own email + password**, Argon2id with server-side sessions in an httpOnly cookie and the §9 login throttle. Built; see `backend/README.md`.
 - **AI: the self-hosted `lumi-ai` service** described above, behind a swappable adapter.
 
 The PWA talks to the backend through a **same-origin proxy**: the browser
-calls `/api/*` and `next.config.mjs` rewrites it to FastAPI. That is not a
+calls `/srv/*` and `next.config.mjs` rewrites it to FastAPI. That is not a
 convenience — the session is an httpOnly `SameSite=Lax` cookie, which a
 browser will not send cross-origin. Calling the backend directly would
 mean `SameSite=None; Secure` or putting the token in JavaScript. Client
 code lives in `src/lib/api.js`; there is no Bearer token anywhere.
 
+The prefix is `/srv` and not the obvious `/api` because **content
+blockers match on path**. An extension in the owner's Chrome killed
+`fetch('/api/auth/me')`, `/api/accounts` and `/api/chat/messages` before
+they left the browser — `TypeError: Failed to fetch`, nothing on the
+wire — while `/api/summary` went through. Three places have to agree:
+`BASE` in `src/lib/api.js`, the rewrite in `next.config.mjs`, and
+`NEVER_CACHE_PREFIXES` in `public/sw.js`. Rewrites are baked at build
+time, so changing it needs a rebuild in production.
+
 Built so far — the chat-first shell:
 
-- **Chat is the root route.** `src/app/(app)/` holds the three surfaces: `/` (chat), `/ringkasan`, `/data`, inside `AppShell`. The old `/` → `/dashboard` redirect is gone.
-- **`AppShell`** (`src/layouts/app/`) fills the dynamic viewport, scrolls only its content area, and compresses by the keyboard inset so the composer stays visible. `BottomTabs` hides while the keyboard is open.
-- **Chat section** (`src/sections/chat/`): thread with sticky-bottom-only-when-already-at-bottom scrolling, composer whose draft survives navigation via `sessionStorage`, and the in-chat `ActionCard` → `TransactionDraftCard` confirm flow.
-- **PWA**: `src/app/manifest.js`, `public/sw.js`, `public/offline.html`, icons generated by `npm run gen:icons`.
-- **`src/utils/format-money.js`** is the only place money becomes text, and it **throws on a non-integer amount** so a float cannot reach the user silently.
+- **Chat is the root route.** `src/app/(app)/` holds eight surfaces: `/`
+  (chat), `/ringkasan`, `/data`, `/kantong`, `/budget`, `/target`,
+  `/simulasi` and `/catat`, all inside `AppShell`. The old `/` →
+  `/dashboard` redirect is gone.
+- **`AppShell`** (`src/layouts/app/`) fills the dynamic viewport, scrolls
+  only its content area, and compresses by the keyboard inset so the
+  composer stays visible. `BottomTabs` hides while the keyboard is open.
+- **Chat section** (`src/sections/chat/`): thread with
+  sticky-bottom-only-when-already-at-bottom scrolling, composer whose
+  draft survives navigation via `sessionStorage`, the board "Mulai"
+  first-run state when no wallet exists yet, and the in-chat
+  `ActionCard` → `DraftCard` confirm flow. `DraftCard` branches per
+  draft kind, because a goal, a budget and a reversal each need a
+  different sentence beside the number.
+- **`src/sections/common/board.jsx`** is the shared vocabulary every
+  surface is assembled from — hero cards, stat tiles, list rows, the
+  progress ring, the wallet picker, the keypad. When a board changes,
+  this file changes and the screens follow.
+- **`SwipeConfirm`** (`src/components/swipe-confirm/`) is how a money
+  write is committed: a deliberate drag, not a button next to the
+  thumb. It stays a real `<button>`, so Enter works.
+- **Five auth screens** under `src/app/auth/` — sign in, sign up, forgot
+  password, check your mail, new password — on one `GuestGuard` layout.
+- **PWA**: `src/app/manifest.js`, `public/sw.js`, `public/offline.html`,
+  icons generated by `npm run gen:icons`.
+- **`src/utils/format-money.js`** is the only place money becomes text,
+  and it **throws on a non-integer amount** so a float cannot reach the
+  user silently. The backend's `app/money.py:format_rupiah` is its
+  counterpart for anything a server message has to say out loud.
 
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
@@ -211,8 +289,15 @@ Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrat
 - **The frontend has no test runner.** The backend has pytest covering AC01–AC05 and AC08; nothing covers the React side.
 - **Physical device testing is not done** (AC15–AC18). The shell is built to the mobile mandate but has only been seen in a desktop browser at phone widths.
 - **Install prompt UI is missing** (FR16 wants a button where available, plus iOS Share → Add to Home Screen guidance).
-- **`/dashboard/*` still exists** from the template. It is dead weight under the new IA and should be deleted once nothing is being cribbed from it.
-- `src/sections/blank/` is likewise leftover template scaffolding.
+- **Voice and receipt photos are stage two.** The composer has both
+  buttons and neither does anything yet; `/v1/audio/transcriptions` and
+  the vision path are unwired.
+- **Dead template routes.** `/dashboard/*` (six `BlankView` pages),
+  `src/sections/blank/`, `src/layouts/dashboard/`,
+  `src/layouts/auth-split/` and the three `nav-config-*` datasets are
+  unreachable from the live app. Nothing is being cribbed from them any
+  more, so they can go — along with `paths.dashboard.*` and the
+  `CONFIG.auth.skip` branch that only they read.
 
 Mobile mechanics worth knowing before touching the shell:
 
@@ -228,7 +313,7 @@ production. Full detail in `backend/README.md`; the essentials:
 
 ```sh
 cd backend
-.venv/Scripts/python -m pytest                       # 354 tests
+.venv/Scripts/python -m pytest                       # 394 tests
 .venv/Scripts/python -m pytest -m "not integration"  # pure rules, no database
 .venv/Scripts/python -m ruff check .
 .venv/Scripts/alembic upgrade head

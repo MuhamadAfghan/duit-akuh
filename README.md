@@ -1,4 +1,4 @@
-# Duit Akuh
+# lega
 
 Pencatatan keuangan pribadi lewat chat — a mobile-first PWA where a single
 conversation can add a wallet, record a transaction, set a budget, create a
@@ -27,12 +27,12 @@ keys live only on the backend (AC21).
 
 | Area                                         | State                                                         |
 | -------------------------------------------- | ------------------------------------------------------------- |
-| Double-entry ledger, transactions, transfers | Built, 354 backend tests                                      |
+| Double-entry ledger, transactions, transfers | Built, 394 backend tests                                      |
 | Email + password auth, server-side sessions  | Built                                                         |
 | Chat orchestrator, 13 tools, streaming       | Built, verified against the real model                        |
 | Goals, allocations, budgets, simulations     | Built                                                         |
 | CSV export                                   | Built                                                         |
-| PWA shell (chat / ringkasan / data)          | Built, installable                                            |
+| PWA shell, eight surfaces                    | Built, installable                                            |
 | Indonesian benchmark                         | 90.3% accuracy, p95 6.50s — both pilot gates pass             |
 | Voice, receipt OCR                           | Stage 2. The adapter has the interface, nothing implements it |
 | Charts                                       | Not installed (see "Reference template")                      |
@@ -44,7 +44,7 @@ keys live only on the backend (AC21).
 ```
   phone / browser
         |
-        |  everything goes to /api/* on THIS origin
+        |  everything goes to /srv/* on THIS origin
         v
   Next.js  :3033 ---- rewrite in next.config.mjs ---->  FastAPI  :8000
   (PWA, MUI)                                             |    |
@@ -131,7 +131,7 @@ Quick check that both halves are up:
 
 ```sh
 curl http://127.0.0.1:8000/health      # the API itself
-curl http://127.0.0.1:3033/api/health  # the API through the proxy
+curl http://127.0.0.1:3033/srv/health  # the API through the proxy
 ```
 
 ## Cara pakai
@@ -140,6 +140,16 @@ curl http://127.0.0.1:3033/api/health  # the API through the proxy
 
 Register at `/auth/sign-up`, then you land on the chat. Sessions are
 server-side, so signing out revokes them for real.
+
+Forgot the password: `/auth/lupa` takes an email and always answers the
+same way, registered or not — a reset form that tells you which
+addresses have accounts is an account-enumeration oracle. The mail
+carries a one-use token good for an hour, and using it revokes every
+session that user had.
+
+The first thing the chat asks is where your money is, because nothing
+else works until one wallet exists. Tap a name to half-write the
+answer, then add the balance.
 
 ### Chat — the main surface
 
@@ -175,23 +185,41 @@ What it **refuses**, by design:
 
 ### Confirmation cards
 
-Every financial write arrives as a card showing the impact first — **Simpan**
-on a transaction, **Konfirmasi** elsewhere, **Batal** to drop it. The card
-carries an operation ID that doubles as the idempotency key, so a double tap or
-a stale card posts exactly once (AC04).
+Every financial write arrives as a card: the amount in its own tinted
+head, a **BELUM TERSIMPAN** badge while it is still a draft, the impact
+on each wallet, and the one sentence that stops the entry being misread
+— a transfer is not spending, a card payment is not a second expense, an
+opening balance is not income.
 
-Posting happens from the stored draft row, never from the model's output a
-second time — what the card showed is what gets written.
+Committing it is a **swipe**, not a tap. A button to save money sits
+exactly where a thumb rests; a drag has to be meant. Reversals are the
+exception: they get a red button, because the gesture that means "yes,
+save this" should not also mean "yes, undo that".
 
-### Ringkasan
+The card carries an operation ID that doubles as the idempotency key, so
+a double tap or a stale card posts exactly once (AC04). Posting happens
+from the stored draft row, never from the model's output a second time —
+what the card showed is what gets written.
 
-Liquid money, net worth, free-to-spend, this month's spending by category, goal
-progress and budget status. Read-only; the chat is where things change.
+### The other surfaces
 
-### Data
+The chat can start and finish everything (FR14); these are the places
+where looking is easier than asking.
 
-Wallets with balances and recent transactions, each labelled by type so a
-transfer is visibly not an expense.
+| Where       | What it is                                                                        |
+| ----------- | --------------------------------------------------------------------------------- |
+| `Ringkasan` | Free-to-spend, liquid money, net worth, this month by category, goals and budgets |
+| `Data`      | Transactions, filtered by period, type and wallet — on the server, not the page   |
+| `Kantong`   | Wallets with balances, debt and limits                                            |
+| `Budget`    | Monthly limits with what is left of each                                          |
+| `Target`    | Goals, progress, and **Sisihkan** to earmark money without moving it              |
+| `Simulasi`  | "What if" arithmetic that writes nothing until applied (AC07)                     |
+| `+`         | Manual entry — keypad, wallet, category, impact, swipe. No AI involved            |
+
+The **+** in the middle of the tab bar is there for the times the model
+is down, slow, or simply not worth the sentence. AC09/AC22 require that
+path to exist, and it uses the same preview-then-post endpoints the chat
+does.
 
 ### Install on a phone
 
@@ -214,7 +242,7 @@ npm run fix:all        # lint:fix + fm:fix - run this after editing imports
 
 # backend
 cd backend
-.venv/Scripts/python -m pytest                       # 354 tests
+.venv/Scripts/python -m pytest                       # 394 tests
 .venv/Scripts/python -m pytest -m "not integration"  # pure rules, no database
 .venv/Scripts/python -m ruff check .
 ```
@@ -256,12 +284,20 @@ temperature 0 (vLLM batching), so read the gate across runs.
 
 ```
 src/
-  app/(app)/              the three surfaces: / (chat), /ringkasan, /data
-  app/auth/               sign-in, sign-up
+  app/(app)/              / (chat), /ringkasan, /data, /kantong, /budget,
+                          /target, /simulasi, /catat
+  app/auth/               sign-in, sign-up, lupa, cek-email, reset
   app/manifest.js         PWA manifest
-  sections/chat/          thread, composer, confirmation cards
+  sections/chat/          thread, composer, confirmation cards, first run
+  sections/common/        board.jsx - the vocabulary every surface is built from
   sections/summary/       Ringkasan
-  sections/data/          wallets and transactions
+  sections/data/          transactions and their filters
+  sections/kantong/       wallets
+  sections/budget/        monthly limits
+  sections/target/        goals and the allocation sheet
+  sections/simulasi/      the calculators
+  sections/catat/         manual entry
+  components/swipe-confirm/  the drag that commits a money write
   layouts/app/            AppShell, BottomTabs - dynamic viewport and keyboard
   lib/api.js              the only client for our backend. No Bearer token
   utils/format-money.js   the only place money becomes text; throws on a float
@@ -273,7 +309,7 @@ backend/
   app/services/ai/        the swappable adapter (vLLM, plus a fake for tests)
   app/api/                FastAPI routes
   benchmarks/             103-message Indonesian corpus and its runner
-  tests/                  354 tests; the PRD's ACs are named as tests
+  tests/                  394 tests; the PRD's ACs are named as tests
 docs/PRD.md               the source of truth
 CLAUDE.md                 working notes for Claude Code
 ```
@@ -288,7 +324,7 @@ paths are centralized in `src/routes/paths.js`.
 
 | Key           | Default                 | Meaning                        |
 | ------------- | ----------------------- | ------------------------------ |
-| `BACKEND_URL` | `http://127.0.0.1:8000` | Where the proxy sends `/api/*` |
+| `BACKEND_URL` | `http://127.0.0.1:8000` | Where the proxy sends `/srv/*` |
 
 The `NEXT_PUBLIC_FIREBASE_*`, `AUTH0`, `SUPABASE` and `AMPLIFY` keys are
 template leftovers; this app uses its own session auth (`CONFIG.auth.method` is
@@ -338,10 +374,15 @@ of them:
 **Every API call returns 401.** You are talking to `:8000` directly, or
 `BACKEND_URL` is wrong. The cookie is same-origin only — go through `:3033`.
 
-**`/api/auth/*` fails in the browser but works in `curl`.** An ad blocker or
-privacy extension is blocking URLs containing `auth`. Proven by
-`/api/%61uth/me` succeeding where `/api/auth/me` threw. It is the browser
-profile, not the app — test in a clean profile or disable the extension.
+**An API call fails in the browser but works in `curl`.** A content
+blocker is matching the path. This already happened once: an extension
+killed `/api/auth/me`, `/api/accounts` and `/api/chat/messages` before they
+left the browser — `TypeError: Failed to fetch`, nothing on the wire —
+while `/api/summary` and `/api/%61uth/me` went straight through. That is
+why the proxy prefix is `/srv` and not `/api`. If it happens again it is
+the browser profile, not the app: test in a clean one, and if a rule
+starts matching `/srv` too, the prefix is three lines away from changing
+(`src/lib/api.js`, `next.config.mjs`, `public/sw.js`).
 
 **Lint fails on imports you just wrote.** `perfectionist/sort-imports` runs at
 **error** severity, sorted by line length within a custom group order. Do not
