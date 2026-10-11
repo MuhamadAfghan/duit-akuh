@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..domain.errors import AccountNotFound, AmbiguousAccount
+from ..domain.errors import AccountNotFound, AmbiguousAccount, DuplicateAccount
 from ..domain.ledger import build_opening_balance
 from ..models import KIND_BY_TYPE, Account, AccountType, TransactionType
 from ..money import positive_rupiah
@@ -46,7 +46,30 @@ def create_account(
     linked_account_id: uuid.UUID | None = None,
     is_system: bool = False,
 ) -> Account:
-    """Create an account. Does not post an opening balance."""
+    """Create an account. Does not post an opening balance.
+
+    Refuses a name the user already has in use. A duplicate wallet is a
+    money bug, not a tidiness one: each copy carries its own opening
+    balance, so "Bank Jago" existing twice overstates net assets by a
+    wallet that was never real. System accounts are exempt — they are
+    looked up by name in :func:`get_system_account`, which is what keeps
+    exactly one of each.
+    """
+    if not is_system:
+        clash = session.scalar(
+            select(Account).where(
+                Account.user_id == user_id,
+                func.lower(Account.name) == name.strip().lower(),
+                Account.is_archived.is_(False),
+            )
+        )
+
+        if clash is not None:
+            raise DuplicateAccount(
+                f"Kantong '{clash.name}' sudah ada. "
+                "Pakai yang itu, ganti namanya, atau arsipkan dulu yang lama."
+            )
+
     account = Account(
         user_id=user_id,
         name=name.strip(),

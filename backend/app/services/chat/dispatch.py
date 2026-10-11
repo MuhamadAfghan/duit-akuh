@@ -677,6 +677,26 @@ def tool_propose_account_change(db: DbSession, user_id: uuid.UUID, args: dict) -
     if opening < 0:
         raise ToolError("Saldo awal tidak boleh negatif")
 
+    # Checked before a card is drawn, not only at confirmation time. The
+    # model re-reads the whole thread, so after a few turns it will
+    # cheerfully re-propose wallets the user already created and
+    # confirmed — which reads to them as their confirmation having been
+    # lost, and would double their opening balances if they confirmed
+    # again. Telling the model here turns that into a question.
+    existing = db.scalar(
+        select(Account).where(
+            Account.user_id == user_id,
+            func.lower(Account.name) == name.strip().lower(),
+            Account.is_archived.is_(False),
+        )
+    )
+
+    if existing is not None:
+        raise ToolError(
+            f"Kantong '{existing.name}' sudah ada, jadi tidak dibuat ulang. "
+            "Kalau maksudnya kantong lain, pakai nama yang berbeda."
+        )
+
     payload = {
         "name": name,
         "type": account_type,

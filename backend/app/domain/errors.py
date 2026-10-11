@@ -30,6 +30,19 @@ class AmbiguousAccount(DomainError):
     code = "ambiguous_account"
 
 
+class DuplicateAccount(DomainError):
+    """A wallet with this name already exists.
+
+    Refused rather than allowed through, because a second wallet under a
+    name the user already uses is not a harmless duplicate: it carries
+    its own opening balance, so net assets silently gain money that does
+    not exist. Same reasoning as AC04 — when a name is ambiguous, ask
+    instead of guessing which one was meant.
+    """
+
+    code = "duplicate_account"
+
+
 class AccountNotFound(DomainError):
     code = "account_not_found"
 

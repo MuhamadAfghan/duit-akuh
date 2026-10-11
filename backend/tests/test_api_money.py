@@ -588,3 +588,84 @@ def test_a_post_is_never_redirected(engine, monkeypatch):
         )
 
     assert response.status_code == 401
+
+
+# ----------------------------------------------------------------------
+# Duplicate wallets
+#
+# A second wallet under a name already in use is a money bug, not an
+# untidiness: each copy carries its own opening balance, so the duplicate
+# adds net assets that were never real. Found in production, where the
+# model re-read the thread and re-proposed two wallets the user had
+# already confirmed — leaving "Bank Jago" and "Gopay" existing twice.
+# ----------------------------------------------------------------------
+
+
+def test_a_second_wallet_with_the_same_name_is_refused(api):
+    make_account(api, "Bank Jago", "bank", balance=3_628_050)
+
+    response = api.post(
+        "/accounts",
+        json={"name": "Bank Jago", "type": "bank", "opening_balance": 6_000_000},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "duplicate_account"
+
+    # The point of refusing: the first wallet's balance is all there is.
+    assert api.get("/summary").json()["liquid"] == 3_628_050
+    assert len(api.get("/accounts").json()) == 1
+
+
+def test_the_duplicate_check_ignores_case_and_padding(api):
+    make_account(api, "Gopay", "ewallet", balance=12_800)
+
+    response = api.post(
+        "/accounts",
+        json={"name": "  gopay ", "type": "ewallet", "opening_balance": 18_562_000},
+    )
+
+    assert response.status_code == 422, "a wallet is the same wallet whatever the casing"
+    assert api.get("/summary").json()["liquid"] == 12_800
+
+
+def test_an_archived_name_can_be_used_again(api):
+    old = make_account(api, "Dompet lama", "cash", balance=50_000)
+    api.patch(f"/accounts/{old['id']}", json={"is_archived": True}).raise_for_status()
+
+    # Archiving is how a wallet is retired (FR01 forbids deleting), so the
+    # name has to come back — otherwise retiring one costs you the name.
+    fresh = make_account(api, "Dompet lama", "cash", balance=20_000)
+
+    assert fresh["id"] != old["id"]
+    assert api.get("/summary").json()["liquid"] == 20_000
+
+
+def test_a_different_name_is_still_allowed(api):
+    make_account(api, "Bank Jago", "bank", balance=100_000)
+    make_account(api, "Bank Jago Bisnis", "bank", balance=200_000)
+
+    assert api.get("/summary").json()["liquid"] == 300_000
+
+
+def test_two_users_may_each_have_a_wallet_of_the_same_name(api, engine, monkeypatch):
+    """The guard is per owner. Sharing a name across accounts is normal,
+    and blocking it would leak that someone else uses it (AC08)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    make_account(api, "Bank Jago", "bank", balance=100_000)
+
+    with TestClient(app) as other:
+        other.post(
+            "/auth/register",
+            json={"email": "lain@example.com", "password": PASSWORD},
+        ).raise_for_status()
+
+        response = other.post(
+            "/accounts",
+            json={"name": "Bank Jago", "type": "bank", "opening_balance": 500_000},
+        )
+
+    assert response.status_code == 201
