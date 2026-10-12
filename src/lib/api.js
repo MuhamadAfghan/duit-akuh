@@ -43,6 +43,61 @@ export class ApiError extends Error {
   get isOffline() {
     return this.status === 0;
   }
+
+  /**
+   * True when the failure is about the journey, not the answer.
+   *
+   * These are all "ask again and it may well work": the host's
+   * protection challenging us, a truncated body, a gateway that was
+   * restarting, a connection that dropped mid-flight. A 401, a 409 or
+   * a 422 is a decision — asking again gets the same decision and
+   * wastes the person's time.
+   *
+   * 429 is deliberately absent. The backend asks us to wait a minute;
+   * retrying is the one thing it is telling us not to do.
+   */
+  get isTransient() {
+    return TRANSIENT_CODES.has(this.code) || (this.status >= 502 && this.status <= 504);
+  }
+}
+
+const TRANSIENT_CODES = new Set(['blocked_by_edge', 'empty_response', 'bad_response', 'offline']);
+
+/**
+ * How many times a read is attempted, the first try included.
+ *
+ * Bounded on purpose, and this is the uncomfortable part: the thing
+ * failing is a *rate-based* defence, so retrying is also what provokes
+ * it. "Keep trying until it works" would be a loop that feeds itself,
+ * and a tab left open on a sick backend would hammer it all night. Four
+ * tries spread over a couple of seconds rescues the blips without
+ * becoming the problem.
+ */
+const READ_ATTEMPTS = 4;
+
+/** Exponential, with jitter so a page's parallel reads do not resync. */
+function backoffMs(round) {
+  const ceiling = Math.min(400 * 2 ** round, 2000);
+
+  return ceiling / 2 + Math.random() * (ceiling / 2);
+}
+
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+
+    const timer = setTimeout(resolve, ms);
+
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 function extractError(status, body) {
@@ -85,7 +140,11 @@ function isEdgeChallenge(response, text) {
   return type.includes('text/html') && /<title[^>]*>\s*One moment/i.test(text);
 }
 
-async function request(path, { method = 'GET', body, headers = {}, signal, retried } = {}) {
+/**
+ * One trip to the server. Throws ApiError; `isTransient` says whether
+ * trying again is worth anything.
+ */
+async function attempt(path, { method, body, headers, signal }) {
   let response;
 
   try {
@@ -148,17 +207,6 @@ async function request(path, { method = 'GET', body, headers = {}, signal, retri
   // 204 has returned above, so a deliberate no-content reply is fine.
   if (payload === null) {
     if (isEdgeChallenge(response, text)) {
-      // The challenge usually passes on a second attempt, so one retry
-      // turns most of these into nothing the person ever sees. GET
-      // only: replaying a write that may already have landed is
-      // exactly what the idempotency rules exist to prevent, and a
-      // challenge gives no way to know which side of it we are on.
-      if (method === 'GET' && !retried) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
-
-        return request(path, { method, body, headers, signal, retried: true });
-      }
-
       throw new ApiError(
         'Permintaan ditahan sama proteksi hosting, bukan sama aplikasinya. Coba lagi sebentar.',
         { status: response.status, code: 'blocked_by_edge' }
@@ -174,6 +222,42 @@ async function request(path, { method = 'GET', body, headers = {}, signal, retri
   }
 
   return payload;
+}
+
+/**
+ * A request, retried while the failure looks like transport.
+ *
+ * **Reads only.** A write that failed on the way back may well have
+ * landed, and sending it again is exactly what the idempotency rules
+ * exist to prevent — the server cannot tell a retry from a second
+ * instruction, and neither can we. A POST gets one attempt and an
+ * honest error; the person decides whether to send it again.
+ *
+ * The last failure is what surfaces, so the message still names what
+ * actually went wrong after the tries ran out.
+ */
+async function request(path, { method = 'GET', body, headers = {}, signal } = {}) {
+  const attempts = method === 'GET' ? READ_ATTEMPTS : 1;
+
+  let failure;
+
+  for (let round = 0; round < attempts; round += 1) {
+    if (round > 0) {
+      await sleep(backoffMs(round - 1), signal);
+    }
+
+    try {
+      return await attempt(path, { method, body, headers, signal });
+    } catch (error) {
+      if (error.name === 'AbortError' || !(error instanceof ApiError) || !error.isTransient) {
+        throw error;
+      }
+
+      failure = error;
+    }
+  }
+
+  throw failure;
 }
 
 export const api = {

@@ -264,6 +264,20 @@ browser will not send cross-origin. Calling the backend directly would
 mean `SameSite=None; Secure` or putting the token in JavaScript. Client
 code lives in `src/lib/api.js`; there is no Bearer token anywhere.
 
+**A read is retried; a write never is.** Imunify360 sits in front of
+this hosting account and answers requests it dislikes with its own
+page — status 200, `content-type: text/html`, "One moment, please…" —
+and our own XHR gets it, intermittently and more on mobile. That, a
+truncated body and a dropped connection are all `isTransient`, so a
+GET gets four attempts over roughly two seconds with jittered backoff.
+A POST gets one: a write that failed on the way back may already have
+landed, and the server cannot tell a retry from a second instruction.
+429 is excluded on purpose — the backend is asking us to wait, and
+retrying is the one thing it is telling us not to do. The retry is
+bounded because the thing failing is a *rate-based* defence: an
+unbounded loop would be feeding it. None of this stops the challenge;
+only excluding this app's paths from Imunify360's WAF does.
+
 The prefix is `/srv` and not the obvious `/api` because **content
 blockers match on path**. An extension in the owner's Chrome killed
 `fetch('/api/auth/me')`, `/api/accounts` and `/api/chat/messages` before
