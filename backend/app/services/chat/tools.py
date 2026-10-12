@@ -202,7 +202,13 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                                         "refund",
                                     ],
                                     "description": (
-                                        "transfer mencakup top-up dan tarik tunai. "
+                                        "'transfer' HANYA untuk memindahkan uang "
+                                        "antar kantong pengguna SENDIRI - top-up "
+                                        "e-wallet, tarik tunai, pindah antar "
+                                        "rekening. Mengirim uang ke ORANG LAIN "
+                                        "('tf ke ibu', 'bayar ke teman', 'kirim ke "
+                                        "penjual') adalah 'expense' dari kantong "
+                                        "sumber, dengan nama orangnya di 'merchant'. "
                                         "PENTING - belanja PAKAI kartu kredit adalah "
                                         "'expense' dengan from_account = kartunya, "
                                         "BUKAN card_payment. Pakai 'card_payment' hanya "
@@ -412,7 +418,14 @@ menuliskannya sebagai daftar bernomor di teks.
 Aturan lain:
 - Semua nominal adalah rupiah bulat (integer). "35rb" = 35000, "1,5 juta" = 1500000.
 - JANGAN pernah menghitung atau menyebut saldo sendiri. Panggil tool untuk angka apa pun.
-- Transfer, top-up dan tarik tunai BUKAN pemasukan atau pengeluaran.
+- "Transfer" di sini berarti uang pindah ANTAR KANTONG PENGGUNA SENDIRI
+  (top-up e-wallet, tarik tunai, pindah antar rekening). Itu bukan
+  pemasukan dan bukan pengeluaran, karena totalnya tidak berubah.
+- Tapi "transfer" dalam bahasa sehari-hari sering berarti MENGIRIM UANG
+  KE ORANG LAIN: "tf ke ibu 300rb", "bayar ke temen", "kirim ke penjual".
+  Itu PENGELUARAN - uangnya benar-benar keluar. Pakai 'expense' dari
+  kantong sumber, dan taruh nama penerimanya di 'merchant'. Orang bukan
+  kantong, jadi jangan cari kantong bernama "Ibu".
 - Membayar tagihan kartu kredit BUKAN pengeluaran baru.
 - Jika kantong tidak disebut atau namanya cocok dengan lebih dari satu, TANYA dulu. Jangan menebak.
 - Tool propose_* hanya membuat draft; pengguna yang mengonfirmasi. Jangan bilang sudah tersimpan.

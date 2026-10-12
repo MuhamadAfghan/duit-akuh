@@ -2074,3 +2074,137 @@ def test_a_refused_tool_says_why_instead_of_generic_advice(chat):
     assert result["drafts"] == []
     assert "BCA" in result["reply"]
     assert "35rb pakai BCA" not in result["reply"]
+
+
+# ----------------------------------------------------------------------
+# Sending money to a person is not moving it between your own wallets.
+
+
+def test_a_transfer_to_a_person_says_what_to_do_instead(chat):
+    """Reported from real use: "gua abis tf ke ibu gua 300rb dari bank
+    jago" answered "Tidak ada kantong yang cocok dengan 'Ibu'", and the
+    model repeated the same call even after being told it was an
+    expense. The error was a dead end; now it names the right call."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "transfer",
+                        "amount": 300_000,
+                        "from_account": "jago",
+                        "to_account": "Ibu",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Oke, aku catat sebagai pengeluaran."))
+
+    send(chat, "gua abis tf ke ibu gua 300rb dari bank jago")
+
+    # The tool result the model was handed has to carry the way out.
+    tool_messages = [m for m in chat.adapter.calls[-1]["messages"] if m.get("role") == "tool"]
+    said = tool_messages[-1]["content"]
+
+    assert "expense" in said
+    assert "merchant" in said
+    assert "Ibu" in said
+
+
+def test_the_hint_is_only_for_the_destination(chat):
+    """A source wallet that does not resolve is a different mistake:
+    the money came from somewhere the person owns either way."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "transfer",
+                        "amount": 300_000,
+                        "from_account": "Dompet Ajaib",
+                        "to_account": "jago",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Kantong mana?"))
+
+    send(chat, "pindahin 300rb dari dompet ajaib ke jago")
+
+    tool_messages = [m for m in chat.adapter.calls[-1]["messages"] if m.get("role") == "tool"]
+    said = tool_messages[-1]["content"]
+
+    assert "Dompet Ajaib" in said
+    assert "merchant" not in said
+
+
+def test_an_expense_to_a_person_still_works(chat):
+    """The shape the model should reach for: money out, person named."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "expense",
+                        "amount": 300_000,
+                        "from_account": "jago",
+                        "merchant": "Ibu",
+                        "category": "Keluarga",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+
+    draft = send(chat, "gua abis tf ke ibu gua 300rb dari bank jago")["drafts"][0]
+
+    assert draft["kind"] == "expense"
+    assert draft["payload"]["merchant"] == "Ibu"
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    # Money left, so it is an expense and the balance drops.
+    assert balances(chat)["Bank Jago"] == 700_000
+
+
+def test_a_real_wallet_transfer_is_still_a_transfer(chat):
+    """The rule it must not break: moving money between the person's
+    own wallets is neither income nor expense (AC02)."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+    make_account(chat, "GoPay", "ewallet", balance=0, alias="gopay")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "transfer",
+                        "amount": 300_000,
+                        "from_account": "jago",
+                        "to_account": "gopay",
+                    }
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+
+    draft = send(chat, "top up gopay 300rb dari jago")["drafts"][0]
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    money = balances(chat)
+    assert money["Bank Jago"] == 700_000
+    assert money["GoPay"] == 300_000

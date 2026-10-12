@@ -473,6 +473,28 @@ def _resolve_optional(
         return None, True
 
 
+#: Said when a transfer names a destination that is not a wallet.
+#:
+#: "gua abis tf ke ibu gua 300rb dari bank jago" is an expense: the
+#: money left, and "Ibu" is who it went to, not somewhere it still is.
+#: The model reads "tf" and reaches for `transfer`, which in this ledger
+#: means moving money between the user's *own* wallets — so the lookup
+#: fails on a name that was never going to be an account.
+#:
+#: Plain "Tidak ada kantong yang cocok dengan 'Ibu'" is a dead end: the
+#: model has no way to know what to do differently, and in practice it
+#: repeated the same call after the person said "ini pengeluaran". The
+#: fix is to make the error say what the right call is. The *backend*
+#: does not reclassify it - that would be guessing with someone's money,
+#: and the draft still goes to the person to confirm (AC04).
+_NOT_A_WALLET_HINT = (
+    "'{name}' bukan kantong punya pengguna. Kalau uangnya dikirim ke ORANG LAIN "
+    "(teman, keluarga, penjual), itu 'expense' dari kantong sumber dengan "
+    "merchant='{name}', BUKAN 'transfer'. 'transfer' hanya untuk memindahkan "
+    "uang antar kantong pengguna sendiri."
+)
+
+
 def _fill_slot(
     db: DbSession,
     user_id: uuid.UUID,
@@ -486,7 +508,19 @@ def _fill_slot(
 ) -> None:
     """Fill one account slot, strictly or leniently depending on mode."""
     if not batched:
-        payload[field] = str(_resolve(db, user_id, _require_str(item, source_key)).id)
+        name = _require_str(item, source_key)
+
+        try:
+            payload[field] = str(_resolve(db, user_id, name).id)
+        except ToolError as exc:
+            # Only the destination of a transfer: a *source* that does
+            # not resolve is a different mistake, and the money has to
+            # have come from somewhere the user owns either way.
+            if field == "to_account_id" and item.get("type") == "transfer":
+                raise ToolError(_NOT_A_WALLET_HINT.format(name=name)) from exc
+
+            raise
+
         return
 
     account_id, missing = _resolve_optional(db, user_id, item.get(source_key))
