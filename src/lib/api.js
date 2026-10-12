@@ -63,6 +63,10 @@ export class ApiError extends Error {
 
 const TRANSIENT_CODES = new Set(['blocked_by_edge', 'empty_response', 'bad_response', 'offline']);
 
+/** One sentence for both shapes the host's protection arrives in. */
+const EDGE_REFUSED =
+  'Permintaan ditahan sama proteksi hosting, bukan sama aplikasinya. Coba lagi sebentar.';
+
 /**
  * How many times a read is attempted, the first try included.
  *
@@ -123,18 +127,27 @@ function extractError(status, body) {
  * True when the host's protection answered instead of our API.
  *
  * Imunify360 sits in front of this account (`server: openresty`) and
- * answers requests it finds suspicious with a JavaScript challenge
- * page — **status 200**, `content-type: text/html`, "One moment,
- * please...". Our own XHR gets it too, intermittently and more often
- * on mobile.
+ * refuses requests it finds suspicious. Our own XHR gets caught,
+ * intermittently and more often on mobile, and it arrives in two
+ * shapes:
  *
- * Reported as "Balasan server kosong", which is how it stayed
- * unexplained for a while: the response is not empty, it is 12KB of
- * HTML that is not JSON. Calling it by its name is most of the fix,
- * because the rest of the fix is a hosting setting and nobody looks
- * there while the app is blaming itself.
+ * - **200** with `content-type: text/html` and "One moment,
+ *   please..." — a JavaScript challenge page. This was reported as
+ *   "Balasan server kosong", which is how it stayed unexplained for a
+ *   while: the response is not empty, it is 12KB of HTML that is not
+ *   JSON.
+ * - **403** with `{"message": "Access denied by Imunify360
+ *   bot-protection..."}`.
+ *
+ * Matched on the word Imunify360 rather than on the status, because a
+ * 403 from *our* backend is a decision about permissions and must not
+ * be retried — and that word does not appear in anything we serve.
  */
-function isEdgeChallenge(response, text) {
+function isEdgeRefusal(response, text) {
+  if (/imunify360/i.test(text)) {
+    return true;
+  }
+
   const type = response.headers.get('content-type') ?? '';
 
   return type.includes('text/html') && /<title[^>]*>\s*One moment/i.test(text);
@@ -194,6 +207,15 @@ async function attempt(path, { method, body, headers, signal }) {
   }
 
   if (!response.ok) {
+    // Checked before the backend's own error shapes, because this body
+    // is not one of them: Imunify360 answers with a bare `message` and
+    // no code, which would otherwise surface as a raw English sentence
+    // about whitelisting IPs that means nothing to the person reading
+    // it and nothing to the caller branching on `code`.
+    if (isEdgeRefusal(response, text)) {
+      throw new ApiError(EDGE_REFUSED, { status: response.status, code: 'blocked_by_edge' });
+    }
+
     const { code, message } = extractError(response.status, payload);
     throw new ApiError(message, { status: response.status, code, body: payload });
   }
@@ -206,11 +228,8 @@ async function attempt(path, { method, body, headers, signal }) {
   //
   // 204 has returned above, so a deliberate no-content reply is fine.
   if (payload === null) {
-    if (isEdgeChallenge(response, text)) {
-      throw new ApiError(
-        'Permintaan ditahan sama proteksi hosting, bukan sama aplikasinya. Coba lagi sebentar.',
-        { status: response.status, code: 'blocked_by_edge' }
-      );
+    if (isEdgeRefusal(response, text)) {
+      throw new ApiError(EDGE_REFUSED, { status: response.status, code: 'blocked_by_edge' });
     }
 
     throw new ApiError(
@@ -423,12 +442,22 @@ export async function streamChat(
   }
 
   if (!response.ok) {
+    const text = await response.text();
     let payload = null;
+
     try {
-      payload = await response.json();
+      payload = JSON.parse(text);
     } catch {
       payload = null;
     }
+
+    // Read as text first: the host's protection refuses with a bare
+    // `message` and no code, and `response.json()` on its HTML
+    // challenge throws before anything can look at it.
+    if (isEdgeRefusal(response, text)) {
+      throw new ApiError(EDGE_REFUSED, { status: response.status, code: 'blocked_by_edge' });
+    }
+
     const { code, message } = extractError(response.status, payload);
     throw new ApiError(message, { status: response.status, code, body: payload });
   }
@@ -439,11 +468,8 @@ export async function streamChat(
   if (!(response.headers.get('content-type') ?? '').includes('json')) {
     const preview = await response.text();
 
-    if (isEdgeChallenge(response, preview)) {
-      throw new ApiError(
-        'Permintaan ditahan sama proteksi hosting, bukan sama aplikasinya. Coba lagi sebentar.',
-        { status: response.status, code: 'blocked_by_edge' }
-      );
+    if (isEdgeRefusal(response, preview)) {
+      throw new ApiError(EDGE_REFUSED, { status: response.status, code: 'blocked_by_edge' });
     }
   }
 

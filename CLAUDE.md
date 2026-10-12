@@ -265,9 +265,12 @@ mean `SameSite=None; Secure` or putting the token in JavaScript. Client
 code lives in `src/lib/api.js`; there is no Bearer token anywhere.
 
 **A read is retried; a write never is.** Imunify360 sits in front of
-this hosting account and answers requests it dislikes with its own
-page — status 200, `content-type: text/html`, "One moment, please…" —
-and our own XHR gets it, intermittently and more on mobile. That, a
+this hosting account and refuses requests it dislikes, in two shapes: a
+200 with `content-type: text/html` and "One moment, please…", or a 403
+with `{"message": "Access denied by Imunify360 bot-protection…"}`. Our
+own XHR gets both, intermittently and more on mobile. `isEdgeRefusal`
+matches on the **word Imunify360**, not on the status — a 403 from our
+own backend is a decision about permissions and must not be retried. That, a
 truncated body and a dropped connection are all `isTransient`, so a
 GET gets four attempts over roughly two seconds with jittered backoff.
 A POST gets one: a write that failed on the way back may already have
