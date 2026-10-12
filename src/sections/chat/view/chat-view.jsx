@@ -208,16 +208,28 @@ export function ChatView() {
    */
   const openThread = useRef(null);
 
-  const reload = useCallback(async () => {
+  /**
+   * `ledgerMoved` is false when the thread is merely being read.
+   *
+   * Opening the app and switching threads both land here, and neither
+   * changes a balance — but bumping the version anyway made the wallet
+   * list and the free-to-spend chip refetch a second time, 400ms after
+   * the first. Six requests in four hundred milliseconds is what the
+   * host's bot protection reacts to, so the duplicate pair was not
+   * merely wasteful: it was the thing getting us challenged.
+   */
+  const reload = useCallback(async ({ ledgerMoved = true } = {}) => {
     try {
       const rows = await chatApi.messages(openThread.current);
       setMessages(rows.length ? toThread(rows) : [WELCOME]);
       setStatus('');
       // The ledger can only have moved when a turn has finished or a
-      // draft was decided, and both end here. The wallet list and the
-      // free-to-spend chip key off this rather than off `messages`,
-      // which changes on every streamed token.
-      setLedgerVersion((version) => version + 1);
+      // draft was decided. The wallet list and the free-to-spend chip
+      // key off this rather than off `messages`, which changes on every
+      // streamed token.
+      if (ledgerMoved) {
+        setLedgerVersion((version) => version + 1);
+      }
     } catch (error) {
       if (error instanceof ApiError && error.isUnauthorized) {
         setStatus('Belum masuk');
@@ -245,7 +257,9 @@ export function ChatView() {
       setMessages([WELCOME]);
       setReady(false);
 
-      await reload();
+      // Switching threads reads a different conversation; no balance
+      // moved, so the wallet list and the chip stay as they are.
+      await reload({ ledgerMoved: false });
     },
     [reload]
   );
@@ -268,7 +282,10 @@ export function ChatView() {
       .catch(() => {})
       .finally(() => {
         if (!cancelled) {
-          reload();
+          // First read of the thread. The effects below have already
+          // fetched the wallets once on mount; bumping the version here
+          // only made them do it again a moment later.
+          reload({ ledgerMoved: false });
         }
       });
 

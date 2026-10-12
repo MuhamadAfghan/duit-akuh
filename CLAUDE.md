@@ -264,6 +264,18 @@ browser will not send cross-origin. Calling the backend directly would
 mean `SameSite=None; Secure` or putting the token in JavaScript. Client
 code lives in `src/lib/api.js`; there is no Bearer token anywhere.
 
+**An identical read is asked once.** Every surface wants the wallet
+list, so moving between them asked again each time — and opening the
+chat fired six requests inside four hundred milliseconds, because
+`reload()` bumped `ledgerVersion` even on the *first* read, making the
+wallet list and the free-to-spend chip fetch a second time. That burst
+is what the host's bot protection reacts to, so it was not merely
+wasteful. `reload({ ledgerMoved: false })` is now passed by the two
+paths that only read, and `api.get` shares an answer for five seconds
+(`invalidateReads`, in memory, cleared by **any** write and by the chat
+stream). A read carrying a `signal` is never shared — one component's
+cancel must not land in another's lap.
+
 **A read is retried; a write never is.** Imunify360 sits in front of
 this hosting account and refuses requests it dislikes, in two shapes: a
 200 with `content-type: text/html` and "One moment, please…", or a 403

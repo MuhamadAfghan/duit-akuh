@@ -279,12 +279,73 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
   throw failure;
 }
 
+/**
+ * Reads answered a moment ago, so a burst asks once.
+ *
+ * Every surface wants the wallet list, and moving between them used to
+ * ask again each time — six requests inside four hundred milliseconds
+ * when the chat opened, which is what the host's bot protection reacts
+ * to. Sharing the answer for a two-second window turns a flick through
+ * the tabs into one request instead of four.
+ *
+ * **Five seconds, and any write empties it.** Showing a stale balance
+ * is the worst thing this app could do, so the window is not bounded by
+ * being short — two seconds already missed an ordinary tab flick — but
+ * by what can change inside it. Nothing moves money except through this
+ * client, every one of those is a POST, and a POST clears the map
+ * before it returns. The chat stream clears it too, since a turn can
+ * post.
+ *
+ * What it does *not* cover: another device changing the same account.
+ * That was already stale until the next fetch; this adds at most five
+ * seconds to it. In memory only, so nothing survives a reload and
+ * nothing reaches disk — the line the service worker also holds.
+ */
+const READ_WINDOW_MS = 5000;
+
+const reads = new Map();
+
+/** Called by every write, so the next read is never pre-write data. */
+export function invalidateReads() {
+  reads.clear();
+}
+
+function cachedRead(path, options = {}) {
+  // An abortable read belongs to its caller: sharing it would let one
+  // component's cancel land in another component's lap.
+  if (options.signal) {
+    return request(path, { ...options, method: 'GET' });
+  }
+
+  const hit = reads.get(path);
+
+  if (hit && Date.now() - hit.at < READ_WINDOW_MS) {
+    return hit.promise;
+  }
+
+  const promise = request(path, { ...options, method: 'GET' });
+
+  reads.set(path, { at: Date.now(), promise });
+
+  // A failure must not be served for two seconds; the retry loop has
+  // already given up by the time this runs.
+  promise.catch(() => reads.delete(path));
+
+  return promise;
+}
+
+function write(path, options) {
+  invalidateReads();
+
+  return request(path, options).finally(invalidateReads);
+}
+
 export const api = {
-  get: (path, options) => request(path, { ...options, method: 'GET' }),
-  post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
-  put: (path, body, options) => request(path, { ...options, method: 'PUT', body }),
-  patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
-  del: (path, options) => request(path, { ...options, method: 'DELETE' }),
+  get: (path, options) => cachedRead(path, options),
+  post: (path, body, options) => write(path, { ...options, method: 'POST', body }),
+  put: (path, body, options) => write(path, { ...options, method: 'PUT', body }),
+  patch: (path, body, options) => write(path, { ...options, method: 'PATCH', body }),
+  del: (path, options) => write(path, { ...options, method: 'DELETE' }),
 };
 
 // ----------------------------------------------------------------------
@@ -472,6 +533,9 @@ export async function streamChat(
       throw new ApiError(EDGE_REFUSED, { status: response.status, code: 'blocked_by_edge' });
     }
   }
+
+  // A turn moves money, so nothing read before it may be reused after.
+  invalidateReads();
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
