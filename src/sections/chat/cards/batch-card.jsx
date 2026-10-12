@@ -171,8 +171,24 @@ function ItemRow({ item, names, accounts, onPick }) {
               color: blocked ? '#7A4100' : 'text.secondary',
             }}
           >
-            {blocked ? (SLOT_LABELS[field] ?? 'Kantongnya belum jelas') : (wallet ?? '—')}
+            {blocked
+              ? (SLOT_LABELS[field] ?? 'Kantongnya belum jelas')
+              : [wallet, item.merchant].filter(Boolean).join(' · ') || '—'}
           </Typography>
+
+          {/* What the money was for, in the person's own words. On a
+              single-entry card this has its own labelled row; here the
+              rows are tight, so it sits under the wallet in lighter
+              type — present when it was said, absent when it was not,
+              rather than an empty "Catatan —" on every line. */}
+          {!blocked && item.note && (
+            <Typography
+              noWrap
+              sx={{ mt: 0.25, fontSize: 12, fontWeight: 600, color: 'text.secondary' }}
+            >
+              {item.note}
+            </Typography>
+          )}
         </Box>
 
         <Typography

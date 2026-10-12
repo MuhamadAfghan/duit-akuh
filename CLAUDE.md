@@ -33,6 +33,14 @@ remains of the starter is listed under "Known gaps".
 These are correctness rules, not preferences. Most of AC01–AC22 exist to catch violations of them.
 
 - **Never use floating point for money.** Store integer rupiah or fixed-precision decimal (FR03).
+- **Every transaction carries three separate keepsakes**, and the tool
+  schema describes each: `category` is the kind (one or two words),
+  `merchant` is who or where the money went, `note` is *what for*, one
+  sentence in the person's own words. They arrived as bare
+  `{"type": "string"}` with no description, which is exactly why the
+  model left them empty — "abis tf 300rb ke ibu buat topup saldo pulsa"
+  lost everything except the number. An absent note is still better
+  than an invented one.
 - **A transfer is between the owner's own wallets.** Money sent to another *person* — "tf ke ibu 300rb", "bayar ke temen" — is an **expense** with the recipient as `merchant`, however the user phrases it. The model reaches for `transfer` on the word "tf" and then fails looking up a wallet called "Ibu"; the tool error names the right call rather than dead-ending, because the backend must not reclassify it itself (AC04).
 - **Money must never be double-counted.** Transfers, top-ups and cash withdrawals are one atomic two-sided transaction and are _neither_ income nor expense; admin fees are a separate expense (FR02/AC02). Credit-card spending is an expense at purchase time and increases card debt — paying the bill reduces bank balance and debt but must **not** re-count the expense (AC03). Opening balance is not income (AC01).
 - **Allocations are virtual, not assets.** Allocating to a goal never increases net assets; total active allocations on an account may not exceed its positive balance (FR07/AC05).

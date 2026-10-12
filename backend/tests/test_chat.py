@@ -2208,3 +2208,122 @@ def test_a_real_wallet_transfer_is_still_a_transfer(chat):
     money = balances(chat)
     assert money["Bank Jago"] == 700_000
     assert money["GoPay"] == 300_000
+
+
+# ----------------------------------------------------------------------
+# What the money was for, kept with the money.
+
+
+def _spend(chat, item, body="catat ini"):
+    chat.adapter.queue(tool("propose_transactions", {"transactions": [item]}))
+    chat.adapter.queue(text("Ini draftnya."))
+
+    return send(chat, body)["drafts"][0]
+
+
+def test_the_note_survives_to_the_stored_transaction(chat):
+    """The three keepsakes are separate on purpose: what kind, to whom,
+    and what for. All three have to reach the ledger, or the card is
+    describing something the record does not hold."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+
+    draft = _spend(
+        chat,
+        {
+            "type": "expense",
+            "amount": 300_000,
+            "from_account": "jago",
+            "merchant": "Ibu",
+            "category": "Keluarga",
+            "note": "tf ke ibu buat top up saldo pulsa",
+        },
+        body="abis tf 300rb ke ibu buat topup saldo pulsa, pake bank jago",
+    )
+
+    assert draft["payload"]["note"] == "tf ke ibu buat top up saldo pulsa"
+    assert draft["payload"]["merchant"] == "Ibu"
+    assert draft["payload"]["category"] == "Keluarga"
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    row = next(t for t in chat.get("/transactions").json() if t["merchant"] == "Ibu")
+    assert row["note"] == "tf ke ibu buat top up saldo pulsa"
+
+
+def test_a_note_in_a_batch_reaches_the_ledger_too(chat):
+    """Entries from one sentence each keep their own reason."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+
+    chat.adapter.queue(
+        tool(
+            "propose_transactions",
+            {
+                "transactions": [
+                    {
+                        "type": "expense",
+                        "amount": 25_000,
+                        "from_account": "jago",
+                        "merchant": "APTB",
+                        "category": "Transport",
+                        "note": "ongkos bus APTB berangkat kerja",
+                    },
+                    {
+                        "type": "expense",
+                        "amount": 18_000,
+                        "from_account": "jago",
+                        "category": "Makan",
+                        "note": "sarapan di kantin",
+                    },
+                ]
+            },
+        )
+    )
+    chat.adapter.queue(text("Ini draftnya."))
+
+    draft = send(chat, "ongkos bus aptb 25rb, sarapan 18rb, dari jago")["drafts"][0]
+
+    assert [i["note"] for i in draft["payload"]["items"]] == [
+        "ongkos bus APTB berangkat kerja",
+        "sarapan di kantin",
+    ]
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    stored = {t["note"] for t in chat.get("/transactions").json()}
+    assert "ongkos bus APTB berangkat kerja" in stored
+    assert "sarapan di kantin" in stored
+
+
+def test_a_transaction_without_a_reason_keeps_no_note(chat):
+    """An empty note is better than an invented one: nothing in the
+    message said what it was for."""
+    make_account(chat, "Bank Jago", balance=1_000_000, alias="jago")
+
+    draft = _spend(
+        chat,
+        {"type": "expense", "amount": 50_000, "from_account": "jago"},
+        body="keluar 50rb dari jago",
+    )
+
+    assert draft["payload"].get("note") is None
+
+    chat.post(f"/chat/drafts/{draft['id']}/confirm").raise_for_status()
+
+    # The opening balance is the only other row, and it carries no note
+    # either; what matters is that none was invented for this one.
+    assert all(t["note"] is None for t in chat.get("/transactions").json())
+
+
+def test_the_model_is_told_what_each_field_is_for(chat):
+    """These three arrived as bare `{"type": "string"}` with no
+    description at all, which is why they came back empty: the model
+    was never told they existed for anything."""
+    from app.services.chat.tools import ALL_TOOLS
+
+    schema = next(t for t in ALL_TOOLS if t["function"]["name"] == "propose_transactions")
+    fields = schema["function"]["parameters"]["properties"]["transactions"]["items"]["properties"]
+
+    for name in ("note", "merchant", "category"):
+        assert fields[name].get("description"), f"{name} has no description"
+
+    assert "merchant" in fields["note"]["description"] or "nominal" in fields["note"]["description"]

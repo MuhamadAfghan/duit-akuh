@@ -233,14 +233,39 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                                         "dengan KARTU yang tagihannya dibayar."
                                     ),
                                 ),
-                                "category": {"type": "string"},
+                                "category": {
+                                    "type": "string",
+                                    "description": (
+                                        "Jenis transaksinya, satu-dua kata: Makan, "
+                                        "Transport, Belanja, Tagihan, Kesehatan, "
+                                        "Keluarga. Bukan kalimat."
+                                    ),
+                                },
                                 "fee": dict(_AMOUNT, description="Biaya admin, jika ada"),
                                 "occurred_on": {
                                     "type": "string",
                                     "description": "Tanggal YYYY-MM-DD, kosongkan jika hari ini",
                                 },
-                                "merchant": {"type": "string"},
-                                "note": {"type": "string"},
+                                "merchant": {
+                                    "type": "string",
+                                    "description": (
+                                        "Ke SIAPA atau di MANA uangnya pergi: nama "
+                                        "orang, toko, atau layanan. 'Ibu', 'APTB', "
+                                        "'Indomaret'. Kosongkan kalau tidak disebut."
+                                    ),
+                                },
+                                "note": {
+                                    "type": "string",
+                                    "description": (
+                                        "Ringkasan SATU KALIMAT tentang UNTUK APA "
+                                        "uangnya, pakai kata-kata penggunanya sendiri. "
+                                        "ISI SETIAP KALI pesannya menyebut alasan atau "
+                                        "konteks. Contoh: 'tf ke ibu buat top up "
+                                        "pulsa', 'ongkos bus APTB berangkat kerja'. "
+                                        "Jangan ulang nominal atau nama kantong - itu "
+                                        "sudah disimpan terpisah."
+                                    ),
+                                },
                             },
                             "required": ["type", "amount"],
                         },
@@ -435,6 +460,17 @@ Aturan lain:
   itu transaksi.
 - Jika hanya ADA SATU kantong yang cocok dengan yang disebut pengguna, langsung
   pakai kantong itu. Bertanya hanya jika benar-benar ada lebih dari satu.
+- Setiap transaksi punya tiga keterangan, dan ketiganya beda:
+  'category' = jenisnya (Makan, Transport, Keluarga) - satu-dua kata;
+  'merchant' = ke siapa atau di mana (Ibu, APTB, Indomaret);
+  'note' = untuk apa uangnya, satu kalimat pakai kata-kata penggunanya.
+  Kalau pesannya menyebut alasan atau konteks, SELALU tulis 'note'.
+  "abis tf 300rb ke ibu buat topup saldo pulsa, pake bank jago"
+  -> expense 300000, from_account "bank jago", merchant "Ibu",
+     category "Keluarga", note "tf ke ibu buat top up saldo pulsa".
+  "spend 25rb buat ongkos bus APTB berangkat kerja"
+  -> expense 25000, merchant "APTB", category "Transport",
+     note "ongkos bus APTB berangkat kerja".
 - Jawab ringkas, dalam bahasa Indonesia.
 """
 
