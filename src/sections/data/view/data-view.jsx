@@ -62,6 +62,14 @@ const TYPES = {
   },
   refund: { label: 'Refund', icon: 'lega:arrow-up', tone: 'green', sign: 1 },
   reversal: { label: 'Dibalik', icon: 'solar:restart-bold', tone: 'grey' },
+  // Both legs land on categories, so no wallet name appears beside it
+  // and no sign is shown — nothing was spent or earned here.
+  reclassify: {
+    label: 'Pindah kategori',
+    icon: 'solar:tag-horizontal-bold-duotone',
+    tone: 'grey',
+    note: 'saldo tidak berubah',
+  },
 };
 
 /**

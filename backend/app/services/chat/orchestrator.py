@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from ...models import Account, AiRequestLog, Conversation, Draft, Message, MessageRole, User
 from ..ai.base import AiAdapter, AiError, ChatResult
+from ..reporting import known_expense_categories, known_income_categories
 from .dispatch import dispatch
 from .sessions import active_conversation, name_if_unnamed
 from .tools import ALL_TOOLS, PROPOSE_TOOL_NAMES, build_system_prompt
@@ -346,10 +347,16 @@ async def run_turn_events(
         ).all()
     ]
 
+    # Same reasoning as the wallets, one layer down. Unshown, the model
+    # picks whatever word the sentence used - "ongkos" one month,
+    # "Transport" the next - and the breakdown ends up with two rows for
+    # one thing that no rule in the schema could have merged.
+    categories = known_expense_categories(db, user_id) + known_income_categories(db, user_id)
+
     prompt: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": build_system_prompt(now_local, user_timezone, wallets),
+            "content": build_system_prompt(now_local, user_timezone, wallets, categories),
         }
     ]
     prompt += _as_prompt(recent_messages(db, conversation.id))

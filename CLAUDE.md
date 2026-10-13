@@ -43,6 +43,7 @@ These are correctness rules, not preferences. Most of AC01–AC22 exist to catch
   than an invented one.
 - **A transfer is between the owner's own wallets.** Money sent to another *person* — "tf ke ibu 300rb", "bayar ke temen" — is an **expense** with the recipient as `merchant`, however the user phrases it. The model reaches for `transfer` on the word "tf" and then fails looking up a wallet called "Ibu"; the tool error names the right call rather than dead-ending, because the backend must not reclassify it itself (AC04).
 - **Money must never be double-counted.** Transfers, top-ups and cash withdrawals are one atomic two-sided transaction and are _neither_ income nor expense; admin fees are a separate expense (FR02/AC02). Credit-card spending is an expense at purchase time and increases card debt — paying the bill reduces bank balance and debt but must **not** re-count the expense (AC03). Opening balance is not income (AC01).
+- **One spelling per category, and moving between them costs nothing.** A category is an account looked up by name, so `transport` and `Transport` used to be two of them — one thing showing as two rows in the breakdown, with a budget on one of them blind to the money booked against the other. `get_system_account` folds case and `canonical_category` fixes the stored spelling; the model is also shown the categories the user already has, because nothing else can stop it inventing "ongkos" for a month whose bus fares it called "Transport" last time. Fixing a wrong label afterwards is `propose_recategorise`, whose legs land on **two category accounts and no wallet** — a mislabelled purchase is not a money mistake, so undoing it must not move money, and a reversal (which hands the cash back) is the wrong act however well the sentence beside it reads.
 - **Allocations are virtual, not assets.** Allocating to a goal never increases net assets; total active allocations on an account may not exceed its positive balance (FR07/AC05).
 - **Credit limits are not money.** Available limit is never an asset nor "uang bebas pakai" (FR01/FR09).
 - **Every write is idempotent.** Each posting carries a unique ID and an idempotency key; a confirmation submitted twice must produce exactly one transaction (FR03/AC04).
@@ -257,7 +258,7 @@ Path alias: `src/...` resolves from the repo root via `jsconfig.json` `baseUrl: 
 
 ## Current state vs. the PRD
 
-The MVP is largely built: a double-entry ledger, auth, the chat orchestrator with 13 tools, goals, budgets, simulations, CSV export, and a PWA shell wired to all of it. The root [`README.md`](README.md) has the setup and usage guide; the remaining gaps are listed below.
+The MVP is largely built: a double-entry ledger, auth, the chat orchestrator with 14 tools, goals, budgets, simulations, CSV export, and a PWA shell wired to all of it. The root [`README.md`](README.md) has the setup and usage guide; the remaining gaps are listed below.
 
 Stack decisions already made (2026-10-10):
 
@@ -398,6 +399,30 @@ Built so far — the chat-first shell:
   edited numbers. Only money kinds are revisable, and the allowlists in
   `app/services/chat/revise.py` and `cards/draft-revise.jsx` are two
   copies of one fact: the server's is the one that decides.
+- **A wrong label is not a wrong transaction.** Asked to merge "ongkos"
+  into "transport", the chat reached for `propose_correction` — the one
+  tool it had — and offered a card headed BATALKAN whose impact handed
+  the cash back, under a sentence promising only a category change.
+  `propose_recategorise` is the missing act: it posts one
+  `TransactionType.RECLASSIFY` per original, dated at the original's own
+  date so the amount stays in its month, with **both legs on category
+  accounts and none on a wallet**. The originals stay POSTED, because
+  they are not wrong; `reverses_id` and the audit event are what keep it
+  traceable. It takes either one `transaction_id` or a whole
+  `from_category`, never both, and each leg in the payload carries the
+  account it actually sits on — a single source id broke the moment a
+  category existed under two spellings.
+- **Categories cannot split on capitalisation.** `get_system_account`
+  matched the name exactly, so "transport" and "Transport" were two
+  accounts, two rows in the breakdown, and a budget on one blind to the
+  other. The lookup now folds case and prefers the older row;
+  `canonical_category` fixes the stored spelling without mangling
+  acronyms. The model is also handed its own category list in the system
+  prompt, for the same reason it is handed the wallet list — naming is a
+  choice only if you have seen the options. `find_transactions` now
+  names each transaction's category and can filter by one, so "which
+  one was the 25rb" is a lookup rather than a question put back to the
+  user.
 - **`src/sections/common/board.jsx`** is the shared vocabulary every
   surface is assembled from — hero cards, stat tiles, list rows, the
   progress ring, the wallet picker, the keypad. When a board changes,
@@ -459,7 +484,7 @@ production. Full detail in `backend/README.md`; the essentials:
 
 ```sh
 cd backend
-.venv/Scripts/python -m pytest                       # 394 tests
+.venv/Scripts/python -m pytest                       # 487 tests
 .venv/Scripts/python -m pytest -m "not integration"  # pure rules, no database
 .venv/Scripts/python -m ruff check .
 .venv/Scripts/alembic upgrade head

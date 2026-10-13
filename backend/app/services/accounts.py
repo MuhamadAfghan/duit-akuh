@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..domain.categories import CategoryGroup, resolve_expense, resolve_income
 from ..domain.errors import AccountNotFound, AmbiguousAccount, DuplicateAccount
 from ..domain.ledger import build_opening_balance
 from ..models import KIND_BY_TYPE, Account, AccountType, TransactionType
@@ -88,14 +89,21 @@ def create_account(
 def get_system_account(
     session: Session, user_id: uuid.UUID, account_type: AccountType, name: str
 ) -> Account:
-    """Fetch a system account, creating it on first use."""
+    """Fetch a system account, creating it on first use.
+
+    Matched case-insensitively: two spellings of one category are one
+    category. When both rows already exist - written before this folded -
+    the older one wins, because that is where the longer history sits.
+    """
     account = session.scalar(
-        select(Account).where(
+        select(Account)
+        .where(
             Account.user_id == user_id,
             Account.type == account_type,
-            Account.name == name,
+            func.lower(Account.name) == name.strip().lower(),
             Account.is_system.is_(True),
         )
+        .order_by(Account.created_at, Account.id)
     )
 
     if account is not None:
@@ -119,16 +127,63 @@ def opening_balance_account(session: Session, user_id: uuid.UUID) -> Account:
     return get_system_account(session, user_id, AccountType.OPENING_BALANCE, OPENING_BALANCE_NAME)
 
 
-def expense_category(
-    session: Session, user_id: uuid.UUID, name: str = UNCATEGORISED_EXPENSE_NAME
+def category_account(
+    session: Session, user_id: uuid.UUID, account_type: AccountType, group: CategoryGroup
 ) -> Account:
-    return get_system_account(session, user_id, AccountType.EXPENSE_CATEGORY, name)
+    """The account this category group is kept in, created on first use.
+
+    **An account the user already has wins over the canonical name.**
+    Somebody whose ledger says "Transport" keeps getting "Transport";
+    creating "Transportasi" beside it would re-open the very split this
+    exists to close. The canonical name is what a *fresh* group is called,
+    not a rename of anybody's history.
+
+    Oldest first when the group somehow holds more than one, because that
+    is where the longer history sits.
+    """
+    account = session.scalar(
+        select(Account)
+        .where(
+            Account.user_id == user_id,
+            Account.type == account_type,
+            func.lower(Account.name).in_(group.aliases),
+            Account.is_system.is_(True),
+        )
+        .order_by(Account.created_at, Account.id)
+    )
+
+    if account is not None:
+        return account
+
+    return create_account(
+        session,
+        user_id=user_id,
+        name=group.canonical,
+        account_type=account_type,
+        is_system=True,
+    )
+
+
+def expense_category(
+    session: Session, user_id: uuid.UUID, name: str | None = UNCATEGORISED_EXPENSE_NAME
+) -> Account:
+    group = resolve_expense(name)
+
+    if not group.canonical:
+        group = resolve_expense(UNCATEGORISED_EXPENSE_NAME)
+
+    return category_account(session, user_id, AccountType.EXPENSE_CATEGORY, group)
 
 
 def income_category(
-    session: Session, user_id: uuid.UUID, name: str = UNCATEGORISED_INCOME_NAME
+    session: Session, user_id: uuid.UUID, name: str | None = UNCATEGORISED_INCOME_NAME
 ) -> Account:
-    return get_system_account(session, user_id, AccountType.INCOME_CATEGORY, name)
+    group = resolve_income(name)
+
+    if not group.canonical:
+        group = resolve_income(UNCATEGORISED_INCOME_NAME)
+
+    return category_account(session, user_id, AccountType.INCOME_CATEGORY, group)
 
 
 def open_account_with_balance(

@@ -175,6 +175,36 @@ export function describeDraft(card, names, options = {}) {
     };
   }
 
+  if (kind === 'recategorise') {
+    const count = payload.count ?? 1;
+
+    return {
+      kicker: 'PINDAH KATEGORI',
+      amount: payload.amount ?? 0,
+      subtitle: `${payload.from_category} → ${payload.to_category}`,
+      confirmLabel: 'Geser untuk pindahkan',
+      body: (
+        <Stack sx={{ gap: 1.5 }}>
+          <DetailRow label="Dari kategori" value={payload.from_category} />
+          <DetailRow label="Ke kategori" value={payload.to_category} />
+          <DetailRow
+            label="Transaksi dipindah"
+            value={count > 1 ? `${count} transaksi` : '1 transaksi'}
+          />
+
+          {/* The one sentence this card exists for. Asked to merge two
+              categories, the chat used to offer a cancellation — and a
+              cancellation hands the money back. Saying plainly that no
+              wallet moves is what tells the two cards apart. */}
+          <BoardNote>
+            Saldo kantong lu <strong>nggak berubah</strong> dan total pengeluaran tetap sama. Yang
+            pindah cuma kategorinya — transaksinya sendiri tetap ada.
+          </BoardNote>
+        </Stack>
+      ),
+    };
+  }
+
   if (kind === 'reversal') {
     return {
       kicker: 'BATALKAN TRANSAKSI',

@@ -30,6 +30,7 @@ from ...domain.balances import (
     total_debt,
 )
 from ...domain.batch import reconcile
+from ...domain.categories import resolve_expense, resolve_income
 from ...domain.errors import AmbiguousAccount, DomainError
 from ...domain.periods import Period, PeriodError, resolve_period
 from ...domain.simulation import SimulationError, simulate_deposit, simulate_regular_saving
@@ -41,12 +42,14 @@ from ...models import (
     Budget,
     Draft,
     DraftStatus,
+    Entry,
     Goal,
     Transaction,
+    TransactionStatus,
     User,
 )
 from ...money import MoneyError, positive_rupiah, rupiah
-from ..accounts import resolve_account
+from ..accounts import expense_category, income_category, resolve_account
 from ..budgets import report as budget_report
 from ..capacity import estimate as estimate_capacity
 from ..drafts import build_legs
@@ -374,20 +377,79 @@ def tool_run_simulation(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
     raise ToolError(f"Jenis simulasi '{kind}' tidak dikenal. Jangan hitung sendiri.")
 
 
+def _category_accounts(
+    db: DbSession, user_id: uuid.UUID, name: str, *, group: bool = False
+) -> list[Account]:
+    """Every category account spelling ``name``, for either direction.
+
+    A list rather than one row because folding the case only stops *new*
+    duplicates; a ledger written before it can still hold "transport"
+    and "Transport" side by side, and a merge that moved one of them
+    would leave the user staring at the other.
+
+    ``group`` widens it to the whole synonym group, which is what a
+    *reading* of "ongkos" means. A merge deliberately does not use it: if
+    "Ongkos" and "Transport" are two accounts in one group, treating them
+    as already-the-same would refuse the very merge that joins them.
+    """
+    needles = (
+        resolve_expense(name).aliases | resolve_income(name).aliases
+        if group
+        else {" ".join(name.split()).lower()}
+    )
+    needles = {needle for needle in needles if needle}
+
+    if not needles:
+        return []
+
+    return list(
+        db.scalars(
+            select(Account)
+            .where(
+                Account.user_id == user_id,
+                Account.kind.in_([AccountKind.EXPENSE, AccountKind.INCOME]),
+                func.lower(Account.name).in_(needles),
+            )
+            .order_by(Account.created_at, Account.id)
+        ).all()
+    )
+
+
 def tool_find_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
     limit = args.get("limit", 20)
     limit = min(max(int(limit) if isinstance(limit, int) else 20, 1), 50)
 
-    rows = db.scalars(
+    accounts = {
+        a.id: a for a in db.scalars(select(Account).where(Account.user_id == user_id)).all()
+    }
+
+    query = (
         select(Transaction)
         .where(Transaction.user_id == user_id)
         .order_by(Transaction.occurred_at.desc())
-        .limit(limit)
-    ).all()
+    )
 
-    accounts = {
-        a.id: a.name for a in db.scalars(select(Account).where(Account.user_id == user_id)).all()
-    }
+    requested = args.get("category")
+
+    if isinstance(requested, str) and requested.strip():
+        # Narrowed by joining through the entries, not by filtering the
+        # page afterwards: "the last 20 transactions, of which three are
+        # Transport" is not the question. The question is "the Transport
+        # ones", and answering it from a window would hide the rest.
+        matches = _category_accounts(db, user_id, requested, group=True)
+
+        if not matches:
+            known = known_expense_categories(db, user_id)
+            raise ToolError(
+                f"Kategori '{requested}' belum pernah dipakai. "
+                + (f"Yang ada: {', '.join(known)}." if known else "Belum ada kategori sama sekali.")
+            )
+
+        query = query.where(
+            Transaction.entries.any(Entry.account_id.in_([a.id for a in matches]))
+        )
+
+    rows = db.scalars(query.limit(limit)).all()
 
     return {
         "transactions": [
@@ -396,15 +458,41 @@ def tool_find_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dic
                 "type": t.type.value,
                 "date": t.occurred_at.date().isoformat(),
                 "status": t.status.value,
+                # The three keepsakes, named separately so the model can
+                # tell "which one was the bus fare" without re-asking the
+                # user something the ledger already knows.
+                "category": _category_name_of(t, accounts),
+                "merchant": t.merchant,
+                "note": t.note,
                 "description": t.description,
                 "entries": [
-                    {"account": accounts.get(e.account_id, "?"), "amount": e.amount}
+                    {
+                        "account": accounts[e.account_id].name if e.account_id in accounts else "?",
+                        "amount": e.amount,
+                    }
                     for e in t.entries
                 ],
             }
             for t in rows
         ]
     }
+
+
+def _category_name_of(transaction: Transaction, accounts: dict[uuid.UUID, Account]) -> str | None:
+    """The category a transaction is filed under, if it has exactly one.
+
+    A transfer has none, and a transfer with an admin fee has one that
+    belongs to the fee rather than to the move itself — so "exactly one"
+    is the honest test, and anything else answers None.
+    """
+    names = [
+        accounts[entry.account_id].name
+        for entry in transaction.entries
+        if entry.account_id in accounts
+        and accounts[entry.account_id].kind in (AccountKind.EXPENSE, AccountKind.INCOME)
+    ]
+
+    return names[0] if len(names) == 1 else None
 
 
 # ----------------------------------------------------------------------
@@ -905,6 +993,209 @@ def tool_propose_correction(db: DbSession, user_id: uuid.UUID, args: dict) -> di
     }
 
 
+#: How many originals one merge may move. A category with more than this
+#: behind it is a bigger act than a chat card can honestly preview, so it
+#: is refused with the count rather than half-done.
+MAX_RECATEGORISE = 100
+
+
+def _category_entry(
+    transaction: Transaction, accounts: dict[uuid.UUID, Account]
+) -> Entry:
+    """The one entry that carries this transaction's category."""
+    candidates = [
+        entry
+        for entry in transaction.entries
+        if entry.account_id in accounts
+        and accounts[entry.account_id].kind in (AccountKind.EXPENSE, AccountKind.INCOME)
+    ]
+
+    if not candidates:
+        raise ToolError(
+            "Transaksi ini tidak punya kategori - pindah kantong dan bayar "
+            "tagihan kartu memang tidak dikategorikan."
+        )
+
+    if len(candidates) > 1:
+        raise ToolError("Transaksi ini punya lebih dari satu kategori; sebutkan yang mana.")
+
+    return candidates[0]
+
+
+def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
+    """Draft a move of one or many transactions into another category.
+
+    The money does not move, so neither does any wallet: both legs of
+    every posting land on category accounts. That is the whole point of
+    the tool existing. Before it did, the model answered "pindahkan ke
+    transport" with `propose_correction`, whose card says BATALKAN and
+    whose impact hands the cash back — the right words over the wrong
+    act.
+    """
+    to_name = _require_str(args, "to_category")
+    raw_id = args.get("transaction_id")
+    from_name = args.get("from_category")
+
+    has_id = isinstance(raw_id, str) and raw_id.strip()
+    has_category = isinstance(from_name, str) and from_name.strip()
+
+    if has_id and has_category:
+        raise ToolError(
+            "Pilih salah satu: satu transaksi lewat 'transaction_id', atau "
+            "seluruh kategori lewat 'from_category'."
+        )
+
+    if not has_id and not has_category:
+        raise ToolError("Sebutkan 'transaction_id' atau 'from_category'.")
+
+    accounts = {
+        a.id: a for a in db.scalars(select(Account).where(Account.user_id == user_id)).all()
+    }
+
+    if has_id:
+        try:
+            transaction_id = uuid.UUID(raw_id)
+        except ValueError as exc:
+            raise ToolError(f"'{raw_id}' bukan UUID transaksi yang valid") from exc
+
+        transaction = db.scalar(
+            select(Transaction).where(
+                Transaction.id == transaction_id, Transaction.user_id == user_id
+            )
+        )
+
+        if transaction is None:
+            raise ToolError("Transaksi tidak ditemukan")
+
+        if transaction.status is TransactionStatus.REVERSED:
+            raise ToolError("Transaksi ini sudah dibatalkan, kategorinya tidak perlu dipindah.")
+
+        moves = [(transaction, _category_entry(transaction, accounts))]
+        source = accounts[moves[0][1].account_id]
+    else:
+        sources = _category_accounts(db, user_id, from_name)
+
+        if not sources:
+            known = known_expense_categories(db, user_id)
+            raise ToolError(
+                f"Kategori '{from_name}' belum pernah dipakai. "
+                + (f"Yang ada: {', '.join(known)}." if known else "Belum ada kategori sama sekali.")
+            )
+
+        source = sources[0]
+        source_ids = {a.id for a in sources}
+
+        rows = db.scalars(
+            select(Transaction)
+            .where(
+                Transaction.user_id == user_id,
+                Transaction.status == TransactionStatus.POSTED,
+                Transaction.entries.any(Entry.account_id.in_(source_ids)),
+            )
+            .order_by(Transaction.occurred_at)
+        ).all()
+
+        moves = [
+            (row, entry)
+            for row in rows
+            for entry in row.entries
+            if entry.account_id in source_ids
+        ]
+
+        if len(moves) > MAX_RECATEGORISE:
+            raise ToolError(
+                f"Kategori '{source.name}' punya {len(moves)} transaksi, terlalu "
+                f"banyak untuk satu kali pindah (maksimal {MAX_RECATEGORISE})."
+            )
+
+    if not moves:
+        raise ToolError(f"Tidak ada transaksi di kategori '{source.name}'.")
+
+    # The target follows the source's nature. Filing an expense under an
+    # income category would make a month's spending read as earnings, and
+    # the ledger would still balance while saying something false.
+    if source.kind is AccountKind.INCOME:
+        target = income_category(db, user_id, to_name)
+    else:
+        target = expense_category(db, user_id, to_name)
+
+    source_ids = {entry.account_id for _, entry in moves}
+
+    if target.id in source_ids:
+        raise ToolError(f"'{to_name}' adalah kategori yang sama dengan '{source.name}'.")
+
+    # Net, not gross. A refund inside the category sits there as a
+    # credit, and adding its size to the purchases would announce a move
+    # bigger than the one about to happen.
+    moved = sum(entry.amount for _, entry in moves)
+    amount = abs(moved)
+
+    snapshots = {s.id: s for s in account_snapshots(db, user_id)}
+
+    # Summed over every spelling being merged, not just the one whose
+    # name is shown. A source that exists twice would otherwise preview a
+    # "before" that is only part of what the card is about to move.
+    source_before = sum(
+        snapshots[account_id].balance for account_id in source_ids if account_id in snapshots
+    )
+    target_before = snapshots[target.id].balance if target.id in snapshots else 0
+
+    rows_impact = [
+        {
+            "account": source.name,
+            "before": source_before,
+            "after": source_before - moved,
+            "delta": -moved,
+        },
+        {
+            "account": target.name,
+            "before": target_before,
+            "after": target_before + moved,
+            "delta": moved,
+        },
+    ]
+
+    draft = _store_draft(
+        db,
+        user_id=user_id,
+        kind="recategorise",
+        payload={
+            "from_category": source.name,
+            "to_category": target.name,
+            "to_account_id": str(target.id),
+            "amount": amount,
+            "count": len(moves),
+            # One row per leg, each naming the account it actually sits
+            # on. A single `from_account_id` was wrong the moment a
+            # category existed under two spellings: half the legs hang
+            # off the other row, and confirming would have looked for
+            # them on an account they were never on.
+            "moves": [
+                {
+                    "transaction_id": str(transaction.id),
+                    "from_account_id": str(entry.account_id),
+                    # Signed, because the direction is part of the fact.
+                    "amount": entry.amount,
+                }
+                for transaction, entry in moves
+            ],
+        },
+        impact=rows_impact,
+    )
+
+    return {
+        "draft_id": str(draft.id),
+        "operation_id": draft.operation_id,
+        "from_category": source.name,
+        "to_category": target.name,
+        "count": len(moves),
+        "amount": amount,
+        "impact": rows_impact,
+        "saved": False,
+        "note": "Menunggu konfirmasi pengguna. Saldo kantong tidak berubah.",
+    }
+
+
 HANDLERS = {
     "get_accounts": tool_get_accounts,
     "get_summary": tool_get_summary,
@@ -919,6 +1210,7 @@ HANDLERS = {
     "propose_goal": tool_propose_goal,
     "propose_allocation": tool_propose_allocation,
     "propose_correction": tool_propose_correction,
+    "propose_recategorise": tool_propose_recategorise,
 }
 
 

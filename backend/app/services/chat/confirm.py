@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from ...api.schemas import Draft as DraftSchema
 from ...domain.errors import AllocationExceedsBalance
-from ...domain.ledger import Leg, build_reversal
+from ...domain.ledger import Leg, build_reclassification, build_reversal
 from ...domain.periods import get_zone
 from ...models import (
     AccountType,
@@ -65,6 +65,9 @@ def confirm_draft(db: DbSession, *, user_id: uuid.UUID, draft: Draft) -> dict:
 
     if draft.kind == "reversal":
         return _confirm_reversal(db, user_id, draft)
+
+    if draft.kind == "recategorise":
+        return _confirm_recategorise(db, user_id, draft)
 
     if draft.kind == "goal":
         return _confirm_goal(db, user_id, draft)
@@ -312,6 +315,110 @@ def _confirm_reversal(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
         "draft_id": str(draft.id),
         "transaction_id": str(result.transaction.id),
         "replayed": result.replayed,
+    }
+
+
+def _confirm_recategorise(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
+    """File transactions under a different category without moving money.
+
+    One posting per original, dated at the original's own date. A single
+    journal for the lot would be shorter, but it would drag last month's
+    bus fares into this month's breakdown — the category moves, the
+    period must not.
+
+    The originals are left POSTED. They are not wrong: the money really
+    did leave, and only the label on it changes. What makes this
+    traceable instead of silent is `reverses_id` pointing back at each
+    original plus the audit event `post_transaction` writes (FR02/AC08).
+    """
+    payload = draft.payload
+    to_id = uuid.UUID(payload["to_account_id"])
+    moves = payload.get("moves") or []
+
+    if not moves:
+        raise DraftNotPending("Draft tidak menyebut transaksi apa pun")
+
+    originals = {
+        t.id: t
+        for t in db.scalars(
+            select(Transaction).where(
+                Transaction.id.in_([uuid.UUID(m["transaction_id"]) for m in moves]),
+                Transaction.user_id == user_id,
+            )
+        ).all()
+    }
+
+    group_id = uuid.uuid4()
+    posted = []
+    replayed = True
+
+    for index, move in enumerate(moves):
+        original = originals.get(uuid.UUID(move["transaction_id"]))
+        from_id = uuid.UUID(move["from_account_id"])
+
+        if original is None:
+            raise DraftNotPending("Transaksi aslinya tidak ditemukan")
+
+        if from_id == to_id:
+            raise DraftNotPending("Kategori asal dan tujuan sama")
+
+        if original.status is TransactionStatus.REVERSED:
+            # Reversed between the card being drawn and swiped. Moving
+            # its category now would resurrect it in the breakdown.
+            draft.status = DraftStatus.STALE
+            db.flush()
+            raise DraftNotPending("Salah satu transaksinya sudah dibatalkan. Coba ulangi.")
+
+        legs = [entry for entry in original.entries if entry.account_id == from_id]
+        amount = sum(entry.amount for entry in legs)
+
+        # The leg has to still be where the card said it was, and for the
+        # figure the card showed. Anything else means something moved
+        # underneath this draft, and posting it would write a number
+        # nobody saw.
+        if amount != move["amount"]:
+            draft.status = DraftStatus.STALE
+            db.flush()
+            raise DraftNotPending("Kategori transaksinya sudah berubah. Coba ulangi.")
+
+        result = post_transaction(
+            db,
+            user_id=user_id,
+            tx_type=TransactionType.RECLASSIFY,
+            occurred_at=original.occurred_at,
+            legs=build_reclassification(
+                from_category_id=from_id, to_category_id=to_id, amount=amount
+            ),
+            # Its own key per original, as a batch does: one shared key
+            # would make the second move look like a replay of the first
+            # and silently drop it (AC04, AC13).
+            idempotency_key=f"{draft.operation_id}:{index}",
+            description=f"Pindah kategori: {payload['from_category']} -> {payload['to_category']}",
+            source="chat",
+            reverses_id=original.id,
+            # A category account carries no balance anyone can overdraw;
+            # the overdraft guard is about wallets, and no wallet is here.
+            allow_negative=True,
+            operation_id=draft.operation_id,
+            group_id=group_id,
+        )
+
+        posted.append(result.transaction.id)
+        replayed = replayed and result.replayed
+
+        if not result.replayed:
+            original.version += 1
+
+    draft.status = DraftStatus.CONFIRMED
+    draft.transaction_id = posted[0]
+    db.flush()
+
+    return {
+        "draft_id": str(draft.id),
+        "group_id": str(group_id),
+        "transaction_ids": [str(value) for value in posted],
+        "count": len(posted),
+        "replayed": replayed,
     }
 
 

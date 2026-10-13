@@ -195,3 +195,38 @@ def build_reversal(original_legs: list[Leg]) -> list[Leg]:
     legs = [Leg(leg.account_id, -leg.amount) for leg in original_legs]
     assert_balanced(legs)
     return legs
+
+
+def build_reclassification(
+    *, from_category_id: uuid.UUID, to_category_id: uuid.UUID, amount: int
+) -> list[Leg]:
+    """Move an amount from one category to another, touching no wallet.
+
+    Filing a purchase under the wrong category is not a money mistake, so
+    undoing it must not move money. Both legs land on category accounts:
+    the old one is credited back to nothing, the new one debited by the
+    same figure. No asset or liability account appears, which is exactly
+    why the balance cannot change and the period's total stays put — only
+    the breakdown moves (FR02/FR06).
+
+    Reversing the original and re-posting it would also work, but it
+    would mean deleting and rewriting a transaction the person really
+    did make, and every id, note and merchant on it with it.
+
+    ``amount`` is the **signed** figure of the leg being moved, not its
+    size. A refund sits on its category as a credit, so merging that
+    category has to carry the minus with it; taking the absolute value
+    would move the refund in the direction of a purchase and leave both
+    categories wrong by twice it.
+    """
+    if from_category_id == to_category_id:
+        raise InvalidTransaction("Kategori asal dan tujuan sama")
+
+    amount = rupiah(amount)
+
+    if amount == 0:
+        raise InvalidTransaction("Tidak ada nominal untuk dipindah")
+
+    legs = [Leg(from_category_id, -amount), Leg(to_category_id, amount)]
+    assert_balanced(legs)
+    return legs

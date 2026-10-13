@@ -123,6 +123,10 @@ class TransactionType(str, enum.Enum):
     CARD_PAYMENT = "card_payment"
     REFUND = "refund"
     REVERSAL = "reversal"
+    #: Moves an amount from one income/expense category to another. Its
+    #: legs touch no wallet, so it is neither income nor expense and
+    #: changes no balance - only which category the money is filed under.
+    RECLASSIFY = "reclassify"
 
 
 class TransactionStatus(str, enum.Enum):

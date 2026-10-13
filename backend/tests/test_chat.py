@@ -14,93 +14,11 @@ import uuid
 
 import pytest
 
-from app.services.ai.fake import FakeAdapter, outage, text, tool
+from app.services.ai.fake import outage, text, tool
 
-from .conftest import requires_db
+from .conftest import PASSWORD, balances, make_account, requires_db, send
 
 pytestmark = [requires_db, pytest.mark.integration]
-
-PASSWORD = "sangat-rahasia-123"
-
-
-@pytest.fixture
-def chat(engine, monkeypatch):
-    """TestClient with a registered user and a scripted adapter attached."""
-    from fastapi.testclient import TestClient
-    from sqlalchemy.orm import sessionmaker
-
-    from app import db as db_module
-    from app.api import routes_chat
-    from app.main import app
-    from app.models import (
-        Account,
-        AiRequestLog,
-        Allocation,
-        AuditEvent,
-        Conversation,
-        Draft,
-        Entry,
-        Goal,
-        LoginAttempt,
-        Message,
-        Session,
-        Transaction,
-        User,
-    )
-
-    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False, future=True)
-    monkeypatch.setattr(db_module, "get_session_factory", lambda: factory)
-
-    adapter = FakeAdapter()
-    routes_chat.set_adapter(adapter)
-
-    with TestClient(app) as client:
-        client.post(
-            "/auth/register", json={"email": "chat@example.com", "password": PASSWORD}
-        ).raise_for_status()
-        client.adapter = adapter
-        yield client
-
-    routes_chat.set_adapter(None)
-
-    with factory() as cleanup:
-        for model in (
-            AiRequestLog,
-            Message,
-            Conversation,
-            AuditEvent,
-            Entry,
-            Draft,
-            Transaction,
-            Allocation,
-            Goal,
-            Account,
-            Session,
-            LoginAttempt,
-            User,
-        ):
-            cleanup.query(model).delete()
-        cleanup.commit()
-
-
-def make_account(chat, name, type_="bank", *, balance=0, alias=None):
-    body = {"name": name, "type": type_, "opening_balance": balance}
-    if alias:
-        body["alias"] = alias
-    response = chat.post("/accounts", json=body)
-    assert response.status_code == 201, response.text
-    return response.json()
-
-
-def balances(chat) -> dict[str, int]:
-    return {a["name"]: a["balance"] for a in chat.get("/accounts").json()}
-
-
-def send(chat, body: str) -> dict:
-    response = chat.post("/chat/messages", json={"body": body})
-    assert response.status_code == 200, response.text
-    return response.json()
-
 
 # ----------------------------------------------------------------------
 # Access

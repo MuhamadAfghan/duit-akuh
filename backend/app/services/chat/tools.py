@@ -154,14 +154,21 @@ READ_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "find_transactions",
             "description": (
-                "Daftar transaksi TERBARU (bukan hasil pencarian per kata kunci "
-                "atau periode). Gunakan untuk menjawab pertanyaan atau menemukan "
-                "transaksi yang ingin dikoreksi."
+                "Daftar transaksi TERBARU, lengkap dengan kategori, merchant dan "
+                "catatannya. Gunakan untuk menjawab pertanyaan atau menemukan "
+                "transaksi yang ingin dikoreksi atau dipindah kategorinya. "
+                "Isi 'category' untuk menyaring satu kategori saja - itu cara "
+                "menemukan transaksi yang mau dipindah, jangan menanyakan "
+                "nominalnya ke pengguna."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "limit": {"type": "integer", "description": "Maksimal 50", "default": 20},
+                    "category": {
+                        "type": "string",
+                        "description": "Opsional. Hanya transaksi dengan kategori ini.",
+                    },
                 },
             },
         },
@@ -238,7 +245,10 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                                     "description": (
                                         "Jenis transaksinya, satu-dua kata: Makan, "
                                         "Transport, Belanja, Tagihan, Kesehatan, "
-                                        "Keluarga. Bukan kalimat."
+                                        "Keluarga. Bukan kalimat. PAKAI ULANG "
+                                        "kategori yang sudah ada kalau artinya "
+                                        "sama - 'ongkos' masuk ke 'Transport', "
+                                        "bukan kategori sendiri."
                                     ),
                                 },
                                 "fee": dict(_AMOUNT, description="Biaya admin, jika ada"),
@@ -387,9 +397,13 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "propose_correction",
             "description": (
-                "Buat draft pembatalan sebuah transaksi. Gunakan find_transactions "
-                "lebih dulu untuk mendapatkan id-nya. Jika ada beberapa kandidat, "
-                "minta pengguna memilih, jangan menebak."
+                "Buat draft PEMBATALAN sebuah transaksi: catatannya dibalik dan "
+                "saldo kantongnya kembali seperti semula. Pakai hanya kalau "
+                "transaksinya memang tidak terjadi atau salah catat. "
+                "JANGAN pakai untuk sekadar mengganti kategori - itu "
+                "propose_recategorise. Gunakan find_transactions lebih dulu untuk "
+                "mendapatkan id-nya. Jika ada beberapa kandidat, minta pengguna "
+                "memilih, jangan menebak."
             ),
             "parameters": {
                 "type": "object",
@@ -397,6 +411,42 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                     "transaction_id": {"type": "string", "description": "UUID transaksi"},
                 },
                 "required": ["transaction_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_recategorise",
+            "description": (
+                "Buat draft PEMINDAHAN KATEGORI. Transaksinya tetap ada, nominalnya "
+                "tetap, saldo kantong TIDAK berubah - yang pindah cuma kategorinya. "
+                "Dipakai untuk 'ubah kategori jadi X', 'ongkos itu masuk transport', "
+                "'gabung kategori A ke B'. "
+                "Sebut 'transaction_id' untuk satu transaksi saja, atau "
+                "'from_category' untuk memindahkan SEMUA transaksi di kategori itu "
+                "sekaligus (menggabungkan dua kategori). Pilih salah satu, jangan "
+                "dua-duanya."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transaction_id": {
+                        "type": "string",
+                        "description": "UUID satu transaksi, dari find_transactions",
+                    },
+                    "from_category": {
+                        "type": "string",
+                        "description": (
+                            "Nama kategori asal, untuk memindahkan semua isinya"
+                        ),
+                    },
+                    "to_category": {
+                        "type": "string",
+                        "description": "Nama kategori tujuan, satu-dua kata",
+                    },
+                },
+                "required": ["to_category"],
             },
         },
     },
@@ -471,6 +521,16 @@ Aturan lain:
   "spend 25rb buat ongkos bus APTB berangkat kerja"
   -> expense 25000, merchant "APTB", category "Transport",
      note "ongkos bus APTB berangkat kerja".
+- PAKAI ULANG kategori yang sudah ada. Kalau pengguna bilang "ongkos"
+  sedangkan dia sudah punya kategori "Transport", pakai "Transport" -
+  kata yang dia ucapkan masuk ke 'note', bukan jadi kategori baru.
+  Kategori baru hanya untuk sesuatu yang benar-benar belum ada
+  padanannya. Satu hal dengan dua nama akan muncul sebagai dua baris di
+  laporan dan membuat budgetnya meleset.
+- Mengubah kategori sebuah transaksi atau menggabungkan dua kategori
+  BUKAN membatalkan transaksi. Pakai propose_recategorise; uangnya tidak
+  bergerak dan saldo tidak berubah. propose_correction itu untuk
+  MENGHAPUS transaksi yang salah catat, dan saldonya ikut kembali.
 - Jawab ringkas, dalam bahasa Indonesia.
 """
 
@@ -481,8 +541,9 @@ def build_system_prompt(
     now: datetime,
     timezone_name: str = "Asia/Jakarta",
     wallets: list[tuple[str, str, str | None]] | None = None,
+    categories: list[str] | None = None,
 ) -> str:
-    """Render the system prompt with today's date and the user's wallets.
+    """Render the system prompt with today's date, wallets and categories.
 
     The date matters because the model has no clock: asked to record
     "kemarin" without it, it produced 2023-10-25, three years off.
@@ -492,6 +553,13 @@ def build_system_prompt(
     substituting the type for the name - and the lookup failed. Listing
     what actually exists turns naming from a guess into a choice, and
     costs a handful of tokens.
+
+    The category list is there for the same reason, and was learned the
+    same way: unprompted, the model named one month's bus fares
+    "Transport" and the next one's "ongkos", and the breakdown grew two
+    rows for one thing. Nothing in the schema could have stopped that -
+    the categories are the user's own words, so the only way to reuse
+    one is to have seen it.
 
     ``wallets`` is ``(name, type, alias)``.
     """
@@ -513,6 +581,15 @@ def build_system_prompt(
             "Jangan mengarang nama lain dan jangan memakai jenis kantong "
             "sebagai nama. Kalau yang disebut pengguna tidak ada di daftar, "
             "katakan kantong itu belum ada."
+        )
+
+    if categories:
+        prompt += (
+            "\n\nKategori yang sudah dipakai pengguna:\n"
+            + "\n".join(f"- {name}" for name in categories)
+            + "\n\nPilih dari daftar itu kalau ada yang artinya sama, "
+            "walaupun pengguna memakai kata lain. Bikin kategori baru "
+            "hanya kalau benar-benar tidak ada padanannya."
         )
 
     return prompt

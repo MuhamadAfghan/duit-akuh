@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
+from ..domain.categories import resolve_expense
 from ..domain.periods import Period
 from ..models import Account, AccountKind, Entry, Transaction, TransactionStatus
 
@@ -112,17 +113,21 @@ def category_total_for_period(
     clear that an unknown reference should prompt a question, not an
     answer that looks authoritative.
     """
-    needle = category.strip().lower()
-
-    account = db.scalar(
-        select(Account).where(
-            Account.user_id == user_id,
-            Account.kind == AccountKind.EXPENSE,
-            func.lower(Account.name) == needle,
-        )
+    # Every account in the asked-for group, not the first one found.
+    # "Berapa ongkos bulan ini" is a question about Transportasi, and a
+    # ledger written before the names were folded can still hold the
+    # month split across two spellings of it.
+    account_ids = list(
+        db.scalars(
+            select(Account.id).where(
+                Account.user_id == user_id,
+                Account.kind == AccountKind.EXPENSE,
+                func.lower(Account.name).in_(resolve_expense(category).aliases),
+            )
+        ).all()
     )
 
-    if account is None:
+    if not account_ids:
         return None
 
     total = db.scalar(
@@ -130,7 +135,7 @@ def category_total_for_period(
         .join(Transaction, Transaction.id == Entry.transaction_id)
         .where(
             Entry.user_id == user_id,
-            Entry.account_id == account.id,
+            Entry.account_id.in_(account_ids),
             Transaction.occurred_at >= period.start,
             Transaction.occurred_at < period.end,
         )
@@ -141,10 +146,23 @@ def category_total_for_period(
 
 def known_expense_categories(db: DbSession, user_id: uuid.UUID) -> list[str]:
     """Names of the user's expense categories, for disambiguation."""
+    return _category_names(db, user_id, AccountKind.EXPENSE)
+
+
+def known_income_categories(db: DbSession, user_id: uuid.UUID) -> list[str]:
+    """Names of the user's income categories, for disambiguation."""
+    return _category_names(db, user_id, AccountKind.INCOME)
+
+
+def _category_names(db: DbSession, user_id: uuid.UUID, kind: AccountKind) -> list[str]:
     return list(
         db.scalars(
             select(Account.name)
-            .where(Account.user_id == user_id, Account.kind == AccountKind.EXPENSE)
+            .where(
+                Account.user_id == user_id,
+                Account.kind == kind,
+                Account.is_archived.is_(False),
+            )
             .order_by(Account.name)
         ).all()
     )
