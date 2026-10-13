@@ -7,8 +7,57 @@ import { AssistantMark } from './chat-message';
 
 // ----------------------------------------------------------------------
 
-/** Staggered so the three dots read as one wave rather than a blink. */
-const DELAYS = ['0s', '0.16s', '0.32s'];
+/**
+ * One dot at a time.
+ *
+ * The cycle is 1.2s and each dot waits exactly a third of it, so the
+ * second starts only once the first has landed: left, middle, right,
+ * pause, again. An earlier version overlapped them — a 0.15s stagger
+ * against a 0.6s bounce — and three dots in the air together read as
+ * one blinking row rather than as a sequence.
+ */
+const CYCLE = 1.2;
+const DELAYS = ['0s', `${CYCLE / 3}s`, `${(CYCLE * 2) / 3}s`];
+
+/**
+ * The bounce, finished inside the first third of the cycle.
+ *
+ * It was one linear-ish hop on a single ease-in-out, which is why it
+ * read as mechanical: a dot that rises and falls at the same rate is a
+ * lift, not a bounce. Real weight needs three different rates, so the
+ * easing is declared per segment rather than once for the whole
+ * animation — up fast and decelerating, down accelerating under
+ * gravity, then a short springy settle through a squash.
+ *
+ * The travel and the scale do the rest of the work. Five pixels on an
+ * 8px dot is barely a nudge on a phone held at arm's length; nine plus
+ * a little swell is a movement you can see without looking for it.
+ *
+ * Everything after 33% is deliberately still. That stillness is what
+ * hands the movement to the next dot and, once all three have gone,
+ * separates one pass from the next.
+ */
+const BOUNCE = {
+  '0%': {
+    opacity: 0.3,
+    transform: 'translateY(0) scale(1)',
+    animationTimingFunction: 'cubic-bezier(0.22, 0.9, 0.3, 1)',
+  },
+  '13%': {
+    opacity: 1,
+    transform: 'translateY(-9px) scale(1.16)',
+    animationTimingFunction: 'cubic-bezier(0.55, 0, 0.75, 0.4)',
+  },
+  '26%': {
+    opacity: 0.8,
+    transform: 'translateY(0) scale(0.86)',
+    animationTimingFunction: 'cubic-bezier(0.3, 1.5, 0.5, 1)',
+  },
+  '33%, 100%': {
+    opacity: 0.3,
+    transform: 'translateY(0) scale(1)',
+  },
+};
 
 /**
  * What the thread shows between sending and the first token.
@@ -54,15 +103,19 @@ export function ChatTyping({ stage }) {
               sx={(theme) => ({
                 width: 8,
                 height: 8,
-                opacity: 0.4,
+                opacity: 0.3,
                 borderRadius: '50%',
-                animationDelay: delay,
                 bgcolor: theme.vars.palette.primary.main,
-                animation: 'lega-typing 1.25s ease-in-out infinite',
-                '@keyframes lega-typing': {
-                  '0%, 72%, 100%': { transform: 'translateY(0)', opacity: 0.4 },
-                  '36%': { transform: 'translateY(-5px)', opacity: 1 },
-                },
+                // The delay belongs *inside* the shorthand. It used to
+                // sit above it as its own `animationDelay`, where the
+                // shorthand then reset it to 0 — which is why all three
+                // dots bounced in unison for as long as this existed.
+                animation: `lega-typing ${CYCLE}s linear ${delay} infinite`,
+                // Each dot gets its own compositor layer; without it the
+                // three repaint together and the wave judders on a
+                // mid-range phone.
+                willChange: 'transform, opacity',
+                '@keyframes lega-typing': BOUNCE,
                 // FR18 asks for reduced motion to be respected. The dots
                 // still have to read as "waiting", so they stay visible
                 // at full strength rather than disappearing.

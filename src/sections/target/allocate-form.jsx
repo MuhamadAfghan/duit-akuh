@@ -12,6 +12,7 @@ import Typography from '@mui/material/Typography';
 import { formatRupiah, formatRupiahPlain } from 'src/utils/format-money';
 
 import { goalsApi, accountsApi } from 'src/lib/api';
+import { APP_COLUMN_WIDTH } from 'src/layouts/app/column';
 
 import { SwipeConfirm } from 'src/components/swipe-confirm';
 
@@ -133,7 +134,7 @@ export function AllocateForm({ goal, open, onClose, onSaved }) {
             width: 1,
             // The shell is a phone column even on a desktop; a sheet
             // spanning the whole window would not belong to it.
-            maxWidth: 720,
+            maxWidth: APP_COLUMN_WIDTH,
             marginInline: 'auto',
             maxHeight: '90dvh',
             borderRadius: '28px 28px 0 0',

@@ -13,6 +13,7 @@ import ListItemIcon from '@mui/material/ListItemIcon';
 import { fChatDay, fChatTime } from 'src/utils/format-chat-time';
 
 import { Iconify } from 'src/components/iconify';
+import { Markdown } from 'src/components/markdown';
 
 import { ChatQuote } from './chat-quote';
 
@@ -189,12 +190,10 @@ export function ChatMessage({ role, body, at, replyTo, onReply }) {
           <ChatQuote role={replyTo.role} excerpt={replyTo.excerpt} sx={{ mb: 1, maxWidth: 240 }} />
         )}
 
-        <Typography
-          variant="body1"
-          sx={{ fontWeight: 500, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-        >
-          {body}
-        </Typography>
+        {/* The assistant writes Markdown whether or not anyone asked
+            it to, so the bubble reads it. The person's own bubble does
+            not: an asterisk somebody typed is an asterisk. */}
+        <Markdown text={body} />
 
         <MetaRow time={fChatTime(at)} onActions={onReply ? openMenu : null} />
       </Box>

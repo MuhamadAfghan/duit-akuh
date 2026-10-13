@@ -8,6 +8,7 @@ import { usePathname } from 'src/routes/hooks';
 import { useVirtualKeyboard } from 'src/hooks';
 
 import { BottomTabs } from './bottom-tabs';
+import { APP_COLUMN_WIDTH } from './column';
 
 // ----------------------------------------------------------------------
 
@@ -53,7 +54,7 @@ export function AppShell({ children }) {
       <Box
         sx={(theme) => ({
           width: 1,
-          maxWidth: 720,
+          maxWidth: APP_COLUMN_WIDTH,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

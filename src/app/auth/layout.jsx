@@ -1,5 +1,7 @@
 import Box from '@mui/material/Box';
 
+import { APP_COLUMN_WIDTH } from 'src/layouts/app/column';
+
 import { GuestGuard } from 'src/auth/guard';
 
 // ----------------------------------------------------------------------
@@ -32,7 +34,7 @@ export default function Layout({ children }) {
             px: 3,
             pt: 'calc(env(safe-area-inset-top) + 44px)',
             width: 1,
-            maxWidth: 430,
+            maxWidth: APP_COLUMN_WIDTH,
             display: 'flex',
             flexDirection: 'column',
           }}

@@ -1,3 +1,5 @@
+export * from './column';
+
 export * from './app-menu';
 
 export * from './app-shell';

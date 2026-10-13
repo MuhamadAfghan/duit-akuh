@@ -5,6 +5,8 @@ import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import Drawer from '@mui/material/Drawer';
 
+import { APP_COLUMN_WIDTH } from 'src/layouts/app/column';
+
 import { DraftCard } from './draft-card';
 import { DraftRevise } from './draft-revise';
 
@@ -94,10 +96,10 @@ export function DraftSheet({
           sx: {
             mx: 'auto',
             width: 1,
-            // The shell caps its column at 720; a drawer portals to the
-            // body, so it has to be told the same thing or it spans a
-            // desktop window the rest of the app never does.
-            maxWidth: 720,
+            // The shell caps its column; a drawer portals to the body,
+            // so it has to be told the same thing or it spans a desktop
+            // window the rest of the app never does.
+            maxWidth: APP_COLUMN_WIDTH,
             maxHeight: '92dvh',
             overflowY: 'auto',
             borderRadius: '28px 28px 0 0',

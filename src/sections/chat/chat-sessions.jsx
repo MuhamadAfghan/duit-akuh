@@ -20,6 +20,8 @@ import DialogContent from '@mui/material/DialogContent';
 
 import { fChatTime, chatDayKey } from 'src/utils/format-chat-time';
 
+import { APP_COLUMN_WIDTH } from 'src/layouts/app/column';
+
 import { Iconify } from 'src/components/iconify';
 import { Scrollbar } from 'src/components/scrollbar';
 
@@ -162,7 +164,7 @@ export function ChatSessions({
         onClose={onClose}
         slotProps={{
           paper: {
-            sx: { width: 1, maxWidth: 480, display: 'flex', flexDirection: 'column' },
+            sx: { width: 1, maxWidth: APP_COLUMN_WIDTH, display: 'flex', flexDirection: 'column' },
           },
         }}
       >
