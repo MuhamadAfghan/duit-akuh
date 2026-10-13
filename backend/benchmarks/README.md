@@ -8,7 +8,7 @@ Measures the two things the PRD gates the pilot on:
 - **Latency** — draft response p95 ≤ 10 seconds (section 9).
 
 ```sh
-.venv/Scripts/python -m benchmarks.run                      # all 103 cases
+.venv/Scripts/python -m benchmarks.run                      # all 128 cases
 .venv/Scripts/python -m benchmarks.run --tags amount date   # a slice
 .venv/Scripts/python -m benchmarks.run --ids amt-01 acc-06  # named cases
 .venv/Scripts/python -m benchmarks.run --fake               # harness self-check, no GPU
@@ -49,6 +49,44 @@ Case("amt-01", "makan 35rb pakai BCA", "draft", "expense", 35_000, "BCA", date="
 Fields left `None` are not checked, so a case can pin the amount without
 pinning a category the PRD never specified.
 
+## What a case can assert
+
+The PRD's four fields are the gate, not the whole of what goes wrong.
+Every defect found against the real model after the first run was
+invisible to them, so a case can pin these too:
+
+| Field                            | Asserts                                                             |
+| -------------------------------- | ------------------------------------------------------------------- |
+| `draft_kind`                     | The Draft row's kind — `batch`, `recategorise`, `reversal`, `goal`  |
+| `items`, `amounts`               | A batch's entry count, and their amounts in any order               |
+| `stated_total`                   | The total the message claimed, carried but never posted             |
+| `category_group`                 | The group the category **resolves** to, per `domain/categories.py`  |
+| `category`, `merchant`, `note`   | The keepsakes: exact (folded), substring, and required substrings   |
+| `has_category`/`merchant`/`note` | Only that the field was filled at all                               |
+| `from_category`, `to_category`   | A recategorise's two category accounts                              |
+| `no_wallet_impact`               | No impact row names a wallet — moving a label moves no money        |
+
+`draft_kind` is the one that cannot be read off the payload: it is
+*which act* the model reached for. A relabel offered as a reversal has
+the right amount, wallet, date and type, and is still the wrong answer.
+
+`category_group` and not `category`, because the spelling stopped being
+the model's to get wrong: `EXPENSE_SYNONYMS` folds "ongkos", "bensin"
+and thirty more into `Transportasi` before an account is touched. What
+is still the model's mistake is filing a bus fare under `Tagihan`.
+
+A case may also carry `seed` transactions, posted through
+`POST /transactions` before the measured message and outside the timing.
+Category reuse and recategorise are only questions once the user has a
+past — a seeded category is listed to the model in the system prompt,
+which is the whole mechanism being tested.
+
+The scorer itself is covered by `tests/test_benchmark_check.py`, which
+needs neither a model nor a database. It is there because this harness
+had already gone stale once: the batch draft shape landed, two `multi`
+cases started failing on the harness rather than on the model, and
+nothing could say which of the two was wrong.
+
 ## Fixture
 
 Every case runs against a **fresh user** with the same five wallets, so
@@ -64,9 +102,14 @@ no case can affect the next, and all of them are deleted at the end:
 
 ## Reading the output
 
-Failures are grouped by field (`nominal`, `akun`, `tanggal`, `jenis`),
-because that is how the PRD states its gate, and by tag, so a weak area
-is visible rather than averaged away.
+Failures are grouped by field (`nominal`, `akun`, `tanggal`, `jenis`,
+and the rest of the table above), because that is how the PRD states its
+gate, and by tag, so a weak area is visible rather than averaged away.
+
+Note what this means for the headline figure: because the corpus asserts
+more than section 10 asks for, the accuracy percentage is **stricter**
+than the PRD's gate, and is meant to be. A run that clears 90% here has
+cleared more than the pilot requires.
 
 Latency is timed around the chat turn alone. Registration and wallet
 setup are excluded — including them inflated every figure by three to

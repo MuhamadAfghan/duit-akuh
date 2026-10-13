@@ -3,7 +3,19 @@
 The PRD gates the pilot on "≥90% draft pada benchmark minimal 100 pesan
 Indonesia mempunyai nominal, akun, tanggal, dan jenis yang tepat sebelum
 koreksi" (section 10), and on a p95 draft latency under ten seconds
-(section 9). This measures both.
+(section 9). This measures both, and three things beyond them, because
+every defect found against the real model since was invisible to those
+four fields:
+
+* the keepsakes - `category`, `merchant`, `note` - which the model left
+  empty for a whole class of sentence;
+* `draft_kind`, which act the model reached for, so a relabel offered as
+  a reversal fails here instead of in front of a user;
+* a batch's entries and the total claimed about them.
+
+A case may also carry `seed` transactions, posted before the measured
+message. Category reuse and recategorise are only questions once the
+user has a past, and nine cases need one.
 
 Not part of the test suite. It costs GPU time on a shared box and needs
 a working `LLM_API_KEY`, so it is run deliberately:
@@ -28,7 +40,8 @@ from datetime import date, datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from benchmarks.corpus import ALL_CASES, Case  # noqa: E402
+from app.domain.categories import resolve_expense, resolve_income  # noqa: E402
+from benchmarks.corpus import ALL_CASES, Case, Seed  # noqa: E402
 
 FIXTURE_WALLETS = [
     ("BCA", "bank", "bca", 5_000_000, None),
@@ -90,8 +103,140 @@ def _draft_date(payload: dict) -> date | None:
         return None
 
 
+def _ci(value: object) -> str:
+    """Case-folded and trimmed; "" for anything that is not a string."""
+    return value.strip().casefold() if isinstance(value, str) else ""
+
+
+def _entries(payload: dict) -> list[dict]:
+    """A batch draft's entries, or the empty list for a single one."""
+    items = payload.get("items")
+
+    return [row for row in items if isinstance(row, dict)] if isinstance(items, list) else []
+
+
+def _primary(payload: dict) -> dict:
+    """The payload a case's per-transaction assertions apply to.
+
+    A batch keeps its entries under `items` and carries none of the
+    transaction fields itself, so a case naming an amount, a wallet or a
+    keepsake means its first entry - the one the sentence named first.
+    """
+    entries = _entries(payload)
+
+    return entries[0] if entries else payload
+
+
+def _check_entries(case: Case, payload: dict) -> list[str]:
+    """Batch-level assertions: how many entries, and which amounts.
+
+    The amounts are compared as a sorted multiset, not in order: which
+    of three expenses the model lists first is not a defect, and
+    pinning it would fail honest answers.
+    """
+    failures: list[str] = []
+    entries = _entries(payload)
+
+    if case.items is not None and len(entries) != case.items:
+        failures.append(f"jumlah entri: expected {case.items}, got {len(entries)}")
+
+    if case.amounts is not None:
+        actual = sorted(row.get("amount") or 0 for row in entries)
+        if actual != sorted(case.amounts):
+            failures.append(f"rincian: expected {sorted(case.amounts)}, got {actual}")
+
+    if case.stated_total is not None and payload.get("stated_total") != case.stated_total:
+        failures.append(
+            f"total disebut: expected {case.stated_total}, got {payload.get('stated_total')}"
+        )
+
+    return failures
+
+
+def _check_keepsakes(case: Case, primary: dict) -> list[str]:
+    """The three keepsakes. An empty one is the bug being measured."""
+    failures: list[str] = []
+
+    category = primary.get("category")
+    if case.category is not None:
+        if _ci(category) != _ci(case.category):
+            failures.append(f"kategori: expected {case.category}, got {category or '(kosong)'}")
+    elif case.has_category and not _ci(category):
+        failures.append("kategori: kosong")
+
+    if case.category_group is not None:
+        # The same resolution the backend applies before it touches an
+        # account, so the case passes on any spelling the table knows
+        # and fails only on a category filed under the wrong thing.
+        resolve = resolve_income if primary.get("type") in {"income", "refund"} else resolve_expense
+        actual = resolve(category).canonical if _ci(category) else ""
+
+        if _ci(actual) != _ci(case.category_group):
+            failures.append(
+                f"kelompok kategori: expected {case.category_group}, "
+                f"got {actual or '(kosong)'} (dari {category or '(kosong)'})"
+            )
+
+    merchant = primary.get("merchant")
+    if case.merchant is not None:
+        if _ci(case.merchant) not in _ci(merchant):
+            failures.append(f"merchant: expected {case.merchant}, got {merchant or '(kosong)'}")
+    elif case.has_merchant and not _ci(merchant):
+        failures.append("merchant: kosong")
+
+    note = primary.get("note")
+    if case.note or case.has_note:
+        if not _ci(note):
+            failures.append("catatan: kosong")
+        else:
+            missing = [word for word in case.note if _ci(word) not in _ci(note)]
+            if missing:
+                failures.append(f"catatan: tidak menyebut {', '.join(missing)}, isinya {note!r}")
+
+    return failures
+
+
+def _check_relabel(case: Case, draft: dict, payload: dict) -> list[str]:
+    """A recategorise names two categories and may move no money."""
+    failures: list[str] = []
+
+    for key, expected, label in (
+        ("from_category", case.from_category, "kategori asal"),
+        ("to_category", case.to_category, "kategori tujuan"),
+    ):
+        if expected is None:
+            continue
+
+        actual = payload.get(key)
+        if _ci(actual) != _ci(expected):
+            failures.append(f"{label}: expected {expected}, got {actual or '(kosong)'}")
+
+    if case.no_wallet_impact:
+        wallets = {name for name, *_ in FIXTURE_WALLETS}
+        touched = sorted(
+            {
+                row.get("account")
+                for row in (draft.get("impact") or [])
+                if row.get("account") in wallets
+            }
+        )
+
+        if touched:
+            failures.append(
+                "dampak: menyentuh kantong "
+                + ", ".join(touched)
+                + " - memindahkan label tidak boleh memindahkan uang"
+            )
+
+    return failures
+
+
 def check(case: Case, drafts: list[dict], today: date) -> list[str]:
-    """Compare a turn's drafts against the case. Returns failure reasons."""
+    """Compare a turn's drafts against the case. Returns failure reasons.
+
+    Every reason reads `field: detail`, because `report` groups a run's
+    failures on the part before the colon.
+    """
     if case.expect in {"none", "refuse"}:
         if drafts:
             kinds = ", ".join(d["kind"] for d in drafts)
@@ -104,37 +249,80 @@ def check(case: Case, drafts: list[dict], today: date) -> list[str]:
     failures: list[str] = []
     first = drafts[0]
     payload = first.get("payload") or {}
+    primary = _primary(payload)
+
+    if case.draft_kind is not None and first.get("kind") != case.draft_kind:
+        failures.append(f"jenis draft: expected {case.draft_kind}, got {first.get('kind')}")
 
     if case.kind is not None:
-        actual = payload.get("type") or first.get("kind")
+        actual = primary.get("type") or first.get("kind")
         if actual != case.kind:
             failures.append(f"jenis: expected {case.kind}, got {actual}")
 
     if case.amount is not None:
-        actual = payload.get("amount") or payload.get("target_amount")
+        actual = primary.get("amount") or payload.get("target_amount")
         if actual != case.amount:
             failures.append(f"nominal: expected {case.amount}, got {actual}")
 
     if case.account is not None:
-        actual = payload.get("account_name") or payload.get("_from_name")
+        actual = primary.get("account_name") or primary.get("_from_name")
         if actual != case.account:
             failures.append(f"akun: expected {case.account}, got {actual}")
 
     if case.to_account is not None:
-        actual = payload.get("_to_name")
+        actual = primary.get("_to_name")
         if actual != case.to_account:
             failures.append(f"akun tujuan: expected {case.to_account}, got {actual}")
 
-    if case.fee is not None and payload.get("fee") != case.fee:
-        failures.append(f"biaya: expected {case.fee}, got {payload.get('fee')}")
+    if case.fee is not None and primary.get("fee") != case.fee:
+        failures.append(f"biaya: expected {case.fee}, got {primary.get('fee')}")
 
     expected_date = _expected_date(case.date, today)
     if expected_date is not None:
-        actual_date = _draft_date(payload) or today
+        actual_date = _draft_date(primary) or today
         if actual_date != expected_date:
             failures.append(f"tanggal: expected {expected_date}, got {actual_date}")
 
+    failures += _check_entries(case, payload)
+    failures += _check_keepsakes(case, primary)
+    failures += _check_relabel(case, first, payload)
+
     return failures
+
+
+def _name_wallets(row: dict, names: dict[str, str]) -> None:
+    """Annotate one payload with the wallet names behind its ids."""
+    row["_from_name"] = names.get(row.get("from_account_id"))
+    row["_to_name"] = names.get(row.get("to_account_id")) or names.get(row.get("card_account_id"))
+
+
+def _post_seed(client, wallet_ids: dict[str, str], seed: Seed) -> None:
+    """Give the user a past, through the ordinary posting endpoint.
+
+    Deliberately not through the chat. A seed the model posted could
+    fail for the model's own reasons, and the case would then be
+    measuring its own setup. `POST /transactions` creates the category
+    account on first use, which is what puts the name in front of the
+    next turn in the system prompt - the whole point of a reuse case.
+    """
+    body: dict[str, object] = {
+        "type": seed.kind,
+        "amount": seed.amount,
+        "category": seed.category,
+    }
+    wallet_field = "to_account_id" if seed.kind == "income" else "from_account_id"
+    body[wallet_field] = wallet_ids[seed.account]
+
+    if seed.note:
+        body["note"] = seed.note
+    if seed.merchant:
+        body["merchant"] = seed.merchant
+
+    client.post(
+        "/transactions",
+        json=body,
+        headers={"Idempotency-Key": f"seed-{uuid.uuid4().hex}"},
+    ).raise_for_status()
 
 
 def run_case(app_module, adapter, case: Case, today: date) -> Outcome:
@@ -172,6 +360,13 @@ def run_case(app_module, adapter, case: Case, today: date) -> Outcome:
                 created.raise_for_status()
                 names[created.json()["id"]] = name
 
+            # Before the clock starts: a seeded past is setup, not
+            # latency the PRD's target is read from.
+            wallet_ids = {wallet: account_id for account_id, wallet in names.items()}
+
+            for seed in case.seed:
+                _post_seed(client, wallet_ids, seed)
+
             started = time.monotonic()
             response = client.post("/chat/messages", json={"body": case.message})
             elapsed = time.monotonic() - started
@@ -191,12 +386,14 @@ def run_case(app_module, adapter, case: Case, today: date) -> Outcome:
             drafts = turn["drafts"]
 
             # Resolve wallet ids to names so the corpus can name wallets.
+            # A batch keeps its entries' ids one level down, so the same
+            # resolution has to reach inside `items` - otherwise every
+            # batch case reads as a draft with no wallet at all.
             for draft in drafts:
                 payload = draft.get("payload") or {}
-                payload["_from_name"] = names.get(payload.get("from_account_id"))
-                payload["_to_name"] = names.get(payload.get("to_account_id")) or names.get(
-                    payload.get("card_account_id")
-                )
+
+                for row in (payload, *_entries(payload)):
+                    _name_wallets(row, names)
 
             failures = check(case, drafts, today)
 

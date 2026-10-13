@@ -33,7 +33,7 @@ from ...domain.balances import (
 from ...domain.batch import reconcile
 from ...domain.categories import resolve_expense, resolve_income
 from ...domain.errors import AmbiguousAccount, DomainError
-from ...domain.periods import Period, PeriodError, resolve_period
+from ...domain.periods import Period, PeriodError, get_zone, resolve_period
 from ...domain.simulation import SimulationError, simulate_deposit, simulate_regular_saving
 from ...models import (
     LIQUID_TYPES,
@@ -422,6 +422,16 @@ def tool_find_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dic
     limit = args.get("limit", 20)
     limit = min(max(int(limit) if isinstance(limit, int) else 20, 1), 50)
 
+    # The day a transaction belongs to is the day it was in the user's
+    # own timezone, which is the rule `domain/periods.py` already states
+    # for months: entries are stored in UTC, and for Asia/Jakarta that
+    # is a seven-hour shift. Taking `.date()` off the stored value named
+    # the previous day for anything bought between midnight and 07:00 —
+    # so the model was told "12 Oktober" about a purchase the summary
+    # and the data screen both called today, and no amount of prompting
+    # could have made it answer right from that.
+    zone = get_zone(getattr(db.get(User, user_id), "timezone", None))
+
     accounts = {
         a.id: a for a in db.scalars(select(Account).where(Account.user_id == user_id)).all()
     }
@@ -459,7 +469,7 @@ def tool_find_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dic
             {
                 "id": str(t.id),
                 "type": t.type.value,
-                "date": t.occurred_at.date().isoformat(),
+                "date": t.occurred_at.astimezone(zone).date().isoformat(),
                 "status": t.status.value,
                 # The three keepsakes, named separately so the model can
                 # tell "which one was the bus fare" without re-asking the

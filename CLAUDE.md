@@ -455,7 +455,15 @@ Built so far — the chat-first shell:
 Known gaps, in the PRD's own build order ("fondasi akun dan ledger → orkestrator chat → kendali chat semua modul → target dan kalkulator → visual, ekspor, QA"):
 
 - **Deposit schedules.** Goals carry a target date but no deposit dates, so `remaining_deposits` is supplied by the caller rather than derived.
-- **Benchmark runs are manual.** `backend/benchmarks/` measures the PRD's pilot gates against the real model; nothing runs it automatically.
+- **Benchmark runs are manual.** `backend/benchmarks/` measures the
+  PRD's pilot gates against the real model; nothing runs it
+  automatically. Its 128 cases assert more than the PRD's four fields —
+  the keepsakes, the resolved category group, which `draft_kind` the
+  model reached for, and a batch's entries — so the accuracy figure is
+  stricter than the section 10 gate. `tests/test_benchmark_check.py`
+  covers the scorer, because the harness went stale once already: the
+  batch draft landed and two cases began failing on the harness rather
+  than on the model.
 - **Charts are not installed** — see the reference-template note below. Note the PRD forbids hover-only/color-only charts, so default chart configs need adapting.
 - **The frontend has no test runner.** The backend has pytest covering AC01–AC05 and AC08; nothing covers the React side.
 - **Physical device testing is not done** (AC15–AC18). The shell is built to the mobile mandate but has only been seen in a desktop browser at phone widths.
@@ -484,7 +492,7 @@ production. Full detail in `backend/README.md`; the essentials:
 
 ```sh
 cd backend
-.venv/Scripts/python -m pytest                       # 487 tests
+.venv/Scripts/python -m pytest                       # 514 tests
 .venv/Scripts/python -m pytest -m "not integration"  # pure rules, no database
 .venv/Scripts/python -m ruff check .
 .venv/Scripts/alembic upgrade head
