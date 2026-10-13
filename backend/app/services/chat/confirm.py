@@ -35,6 +35,7 @@ from ...models import (
 from ..accounts import open_account_with_balance
 from ..budgets import set_budget
 from ..drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
+from ..duplicates import posted_twin
 from ..goals import allocate, create_goal
 from ..posting import post_transaction
 from .dispatch import moved_away
@@ -54,6 +55,49 @@ class BatchIncomplete(DraftNotPending):
     """
 
     code = "batch_incomplete"
+
+
+class AlreadyPosted(DraftNotPending):
+    """An entry the ledger already holds.
+
+    The card is built from what the model proposed, and the model
+    proposes from a thread it re-reads each turn — so a draft can hold
+    money that is already posted. The draft path leaves those entries
+    out, and this is the gate behind it, for a card raised before that
+    check existed or by any route that skips it. The idempotency key
+    cannot stand in for it: a new draft is a new operation.
+    """
+
+    code = "already_posted"
+
+
+#: Payload keys that are ours rather than the draft schema's. Stripped
+#: before validation, the way `unresolved` already is.
+_NOT_SCHEMA = ("unresolved", "duplicate_ok")
+
+
+def _refuse_if_posted(
+    db: DbSession, user_id: uuid.UUID, parsed, zone, *, allowed: bool = False
+) -> None:
+    """Stop a confirmation that would record the same money twice.
+
+    ``allowed`` is the owner saying it really did happen twice, carried
+    on the draft from when they said it.
+    """
+    if allowed:
+        return
+
+    twin = posted_twin(
+        db,
+        user_id,
+        tx_type=TRANSACTION_TYPES[parsed.type],
+        legs=build_legs(db, user_id, parsed),
+        occurred_at=occurred_at_of(parsed, zone),
+        zone=zone,
+    )
+
+    if twin is not None:
+        raise AlreadyPosted("Transaksi ini sudah tercatat, jadi tidak disimpan lagi")
 
 
 def confirm_draft(db: DbSession, *, user_id: uuid.UUID, draft: Draft) -> dict:
@@ -119,8 +163,9 @@ def _confirm_batch(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
     replayed = True
 
     for index, item in enumerate(items):
-        payload = {key: value for key, value in item.items() if key != "unresolved"}
+        payload = {key: value for key, value in item.items() if key not in _NOT_SCHEMA}
         parsed = TypeAdapter(DraftSchema).validate_python(payload)
+        _refuse_if_posted(db, user_id, parsed, zone, allowed=item.get("duplicate_ok") is True)
 
         result = post_transaction(
             db,
@@ -156,13 +201,16 @@ def _confirm_batch(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
 
 
 def _confirm_transaction(db: DbSession, user_id: uuid.UUID, draft: Draft) -> dict:
-    parsed = TypeAdapter(DraftSchema).validate_python(draft.payload)
+    stored = {key: value for key, value in draft.payload.items() if key not in _NOT_SCHEMA}
+    parsed = TypeAdapter(DraftSchema).validate_python(stored)
     legs = build_legs(db, user_id, parsed)
 
     # A stored payload can hold an offset-less date if whatever drafted
     # it wrote one; reading it as the owner's wall clock beats letting
     # the column type refuse it at confirmation time.
     zone = get_zone(getattr(db.get(User, user_id), "timezone", None))
+
+    _refuse_if_posted(db, user_id, parsed, zone, allowed=draft.payload.get("duplicate_ok") is True)
 
     result = post_transaction(
         db,

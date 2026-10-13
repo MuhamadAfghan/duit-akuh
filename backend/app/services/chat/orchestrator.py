@@ -33,7 +33,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from ...models import Account, AiRequestLog, Conversation, Draft, Message, MessageRole, User
+from ...models import (
+    Account,
+    AiRequestLog,
+    Conversation,
+    Draft,
+    DraftStatus,
+    Message,
+    MessageRole,
+    User,
+)
+from ...money import format_rupiah
 from ..ai.base import AiAdapter, AiError, ChatResult
 from ..reporting import known_expense_categories, known_income_categories
 from .dispatch import dispatch
@@ -99,8 +109,12 @@ _NUDGE = (
     "mengonfirmasi lewat teks, padahal kamu tidak memanggil tool apa pun. "
     "Tidak ada draft, tidak ada kartu, dan pengguna tidak punya apa pun "
     "untuk dikonfirmasi - kalau dia menjawab 'ok' tidak akan terjadi apa-apa. "
-    "Panggil tool propose_* sekarang dengan data yang sama, sekaligus semua "
-    "itemnya dalam satu panggilan. Kartu yang akan bertanya, bukan kamu. "
+    "Panggil tool propose_* sekarang dengan data yang sama. Kalau pesan "
+    "TERAKHIR pengguna menyebut beberapa transaksi, masukkan semuanya dalam "
+    "SATU panggilan - tapi hanya yang disebut di pesan terakhir itu. Jangan "
+    "menyertakan transaksi dari pesan-pesan sebelumnya: itu sudah diurus, dan "
+    "mengusulkannya lagi membuat uang orang terhitung dua kali. "
+    "Kartu yang akan bertanya, bukan kamu. "
     "Kalau ternyata pengguna memang tidak minta mencatat apa pun, jawab "
     "biasa saja tanpa membuat draft."
 )
@@ -161,7 +175,68 @@ def recent_messages(
     return list(reversed(rows))
 
 
-def _as_prompt(messages: list[Message]) -> list[dict[str, Any]]:
+#: What became of a card, in the words the model is shown. CONFIRMED
+#: carries an instruction and not only a fact, because the fact alone
+#: was not enough: told merely that a draft existed, the model folded
+#: it into the next batch.
+_DRAFT_OUTCOME = {
+    DraftStatus.CONFIRMED: "SUDAH DISIMPAN. Jangan diusulkan lagi.",
+    DraftStatus.CANCELLED: "Dibatalkan oleh pengguna, tidak tersimpan.",
+    DraftStatus.STALE: "Kedaluwarsa, tidak tersimpan.",
+    DraftStatus.PENDING: "Masih menunggu konfirmasi pengguna.",
+}
+
+#: A digest is a reminder, not a record. The window is 24,576 tokens for
+#: prompt and output together, and twenty turns of full payloads would
+#: crowd out the conversation they are there to explain.
+DIGEST_CHARS = 160
+
+
+def _entry_digest(payload: dict[str, Any]) -> str:
+    """One transaction, in a few words."""
+    parts = [str(payload.get("type") or "transaksi")]
+
+    amount = payload.get("amount")
+    if isinstance(amount, int):
+        parts.append(format_rupiah(amount))
+
+    for key in ("category", "merchant"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+
+    return " ".join(parts)
+
+
+def _draft_digest(draft: Draft) -> str:
+    """What the card held, short enough to repeat twenty times."""
+    payload = draft.payload or {}
+
+    if draft.kind == "batch":
+        items = [i for i in (payload.get("items") or []) if isinstance(i, dict)]
+        inner = "; ".join(_entry_digest(item) for item in items)
+        summary = f"{len(items)} transaksi: {inner}"
+    elif draft.kind == "recategorise":
+        summary = f"pindah kategori {payload.get('from_category')} -> {payload.get('to_category')}"
+    elif draft.kind in {"expense", "income", "transfer", "card_payment", "refund"}:
+        summary = _entry_digest(payload)
+    else:
+        summary = str(draft.kind)
+        amount = payload.get("amount") or payload.get("target_amount")
+        if isinstance(amount, int):
+            summary = f"{summary} {format_rupiah(amount)}"
+
+    summary = " ".join(summary.split())
+
+    if len(summary) > DIGEST_CHARS:
+        summary = f"{summary[:DIGEST_CHARS].rstrip()}…"
+
+    return summary
+
+
+def _as_prompt(
+    messages: list[Message], drafts: dict[uuid.UUID, Draft] | None = None
+) -> list[dict[str, Any]]:
     """Render stored turns for the model.
 
     Card turns are rendered as an explicit statement that a tool was
@@ -170,24 +245,50 @@ def _as_prompt(messages: list[Message]) -> list[dict[str, Any]]:
     text without ever calling propose_*, so the user sees a reply
     claiming a draft that does not exist. Observed against the real
     model; `test_history_shows_that_tools_were_used` guards it.
+
+    Each card also says what it held and what became of it, which the
+    history used to leave out entirely. Every card read the same: "a
+    draft card appeared". So a confirmed purchase and an abandoned one
+    looked alike, and when the next message mentioned a second expense
+    the model proposed a batch holding both — re-offering money already
+    in the ledger. Confirming that would have posted it twice, and no
+    idempotency key would have caught it: a new draft is a new
+    operation, which everywhere else is exactly what is wanted.
     """
     rendered: list[dict[str, Any]] = []
+    drafts = drafts or {}
 
     for message in messages:
         if message.body:
             rendered.append({"role": message.role.value, "content": _with_quote(message)})
         elif message.draft_id:
+            draft = drafts.get(message.draft_id)
+            card = (
+                f"{_draft_digest(draft)} — {_DRAFT_OUTCOME.get(draft.status, '')}".strip(" —")
+                if draft is not None
+                else "isinya tidak lagi tersedia"
+            )
             rendered.append(
                 {
                     "role": "assistant",
                     "content": (
-                        "[Aku memanggil tool propose_* dan kartu draft tampil. "
+                        f"[Aku memanggil tool propose_* dan kartu draft tampil: {card} "
                         "Draft hanya muncul lewat tool, bukan lewat teks.]"
                     ),
                 }
             )
 
     return rendered
+
+
+def _drafts_for(db: DbSession, messages: list[Message]) -> dict[uuid.UUID, Draft]:
+    """The Draft rows behind the card turns, in one query."""
+    ids = {m.draft_id for m in messages if m.draft_id}
+
+    if not ids:
+        return {}
+
+    return {d.id: d for d in db.scalars(select(Draft).where(Draft.id.in_(ids))).all()}
 
 
 #: How much of a quoted turn the model is shown. The context window is
@@ -359,7 +460,8 @@ async def run_turn_events(
             "content": build_system_prompt(now_local, user_timezone, wallets, categories),
         }
     ]
-    prompt += _as_prompt(recent_messages(db, conversation.id))
+    history = recent_messages(db, conversation.id)
+    prompt += _as_prompt(history, _drafts_for(db, history))
 
     drafts: list[Draft] = []
     #: A read tool's result the client can draw, if this turn produced

@@ -50,11 +50,12 @@ from ...models import (
     TransactionType,
     User,
 )
-from ...money import MoneyError, positive_rupiah, rupiah
+from ...money import MoneyError, format_rupiah, positive_rupiah, rupiah
 from ..accounts import expense_category, income_category, resolve_account
 from ..budgets import report as budget_report
 from ..capacity import estimate as estimate_capacity
-from ..drafts import build_legs
+from ..drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
+from ..duplicates import posted_twin
 from ..goals import headroom, saved_for
 from ..posting import account_snapshots
 from ..reporting import category_total_for_period, known_expense_categories, period_report
@@ -458,9 +459,7 @@ def tool_find_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dic
                 + (f"Yang ada: {', '.join(known)}." if known else "Belum ada kategori sama sekali.")
             )
 
-        query = query.where(
-            Transaction.entries.any(Entry.account_id.in_([a.id for a in matches]))
-        )
+        query = query.where(Transaction.entries.any(Entry.account_id.in_([a.id for a in matches])))
 
     rows = db.scalars(query.limit(limit)).all()
 
@@ -631,6 +630,48 @@ def _fill_slot(
         unresolved.append(field)
 
 
+def _already_posted(
+    db: DbSession, user_id: uuid.UUID, payload: dict[str, Any], item: dict
+) -> str | None:
+    """Name the posted transaction this entry would repeat, if there is one.
+
+    Returns a short label for the reply, not an exception: one repeated
+    entry among three new ones must not throw away the two that were
+    right — the same reasoning that leaves an unresolved wallet blank
+    rather than raising.
+    """
+    if item.get("duplicate_ok") is True:
+        return None
+
+    try:
+        legs = _legs_for(db, user_id, payload)
+    except Exception:  # noqa: BLE001 - an invalid payload is refused later,
+        return None  # with a better message than this check could give.
+
+    from pydantic import TypeAdapter
+
+    from ...api.schemas import Draft as DraftSchema
+
+    zone = get_zone(getattr(db.get(User, user_id), "timezone", None))
+    parsed = TypeAdapter(DraftSchema).validate_python(payload)
+
+    twin = posted_twin(
+        db,
+        user_id,
+        tx_type=TRANSACTION_TYPES[parsed.type],
+        legs=legs,
+        occurred_at=occurred_at_of(parsed, zone),
+        zone=zone,
+    )
+
+    if twin is None:
+        return None
+
+    named = " ".join(part for part in (payload.get("category"), payload.get("merchant")) if part)
+
+    return f"{named or payload['type']} {format_rupiah(payload['amount'])}"
+
+
 def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
     items = args.get("transactions")
 
@@ -654,6 +695,8 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
 
     drafts = []
     payloads = []
+    #: Entries left out because the ledger already holds them.
+    skipped: list[str] = []
 
     for item in items:
         if not isinstance(item, dict):
@@ -706,6 +749,19 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
         if kind == "refund" and "category" not in payload:
             raise ToolError("Refund memerlukan kategori transaksi aslinya")
 
+        if item.get("duplicate_ok") is True:
+            # Carried into the payload, not just acted on here: the
+            # confirmation gate reads the stored draft and nothing
+            # else, so an override that lived only in this call would
+            # build a card the swipe then refused.
+            payload["duplicate_ok"] = True
+        elif not unresolved:
+            repeated = _already_posted(db, user_id, payload, item)
+
+            if repeated is not None:
+                skipped.append(repeated)
+                continue
+
         if batched:
             payloads.append({"payload": payload, "unresolved": unresolved})
             continue
@@ -717,8 +773,21 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
             {"draft_id": str(draft.id), "operation_id": draft.operation_id, "impact": impact}
         )
 
+    if skipped and not payloads and not drafts:
+        raise ToolError(
+            "Sudah tercatat sebelumnya: "
+            + "; ".join(skipped)
+            + ". Tidak ada draft baru. Beri tahu pengguna, jangan diusulkan lagi. "
+            "Kalau dia menegaskan transaksinya memang terjadi lagi, ulangi dengan "
+            "duplicate_ok: true."
+        )
+
     if batched:
-        draft = _store_batch(db, user_id, payloads, stated_total)
+        # The stated total described the whole lot the user said. With
+        # an entry left out it no longer describes this draft, and
+        # reconciling against it would report a difference the user
+        # never claimed.
+        draft = _store_batch(db, user_id, payloads, None if skipped else stated_total)
 
         drafts.append(
             {
@@ -728,7 +797,20 @@ def tool_propose_transactions(db: DbSession, user_id: uuid.UUID, args: dict) -> 
             }
         )
 
-    return {"drafts": drafts, "saved": False, "note": "Menunggu konfirmasi pengguna"}
+    result: dict[str, Any] = {
+        "drafts": drafts,
+        "saved": False,
+        "note": "Menunggu konfirmasi pengguna",
+    }
+
+    if skipped:
+        result["sudah_tercatat"] = skipped
+        result["note"] = (
+            "Menunggu konfirmasi pengguna. Yang sudah tercatat tidak dimasukkan lagi - "
+            "sebutkan itu ke pengguna."
+        )
+
+    return result
 
 
 def _store_batch(
@@ -1012,9 +1094,7 @@ def tool_propose_correction(db: DbSession, user_id: uuid.UUID, args: dict) -> di
 MAX_RECATEGORISE = 100
 
 
-def _category_entry(
-    transaction: Transaction, accounts: dict[uuid.UUID, Account]
-) -> Entry:
+def _category_entry(transaction: Transaction, accounts: dict[uuid.UUID, Account]) -> Entry:
     """The one entry that carries this transaction's category."""
     candidates = [
         entry

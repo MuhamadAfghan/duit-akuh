@@ -276,6 +276,15 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                                         "sudah disimpan terpisah."
                                     ),
                                 },
+                                "duplicate_ok": {
+                                    "type": "boolean",
+                                    "description": (
+                                        "Isi true HANYA kalau pengguna menegaskan "
+                                        "transaksi yang sama memang terjadi lebih dari "
+                                        "sekali di hari itu. Tanpa ini backend menolak "
+                                        "mencatat ulang sesuatu yang sudah tersimpan."
+                                    ),
+                                },
                             },
                             "required": ["type", "amount"],
                         },
@@ -437,9 +446,7 @@ PROPOSE_TOOLS: list[dict[str, Any]] = [
                     },
                     "from_category": {
                         "type": "string",
-                        "description": (
-                            "Nama kategori asal, untuk memindahkan semua isinya"
-                        ),
+                        "description": ("Nama kategori asal, untuk memindahkan semua isinya"),
                     },
                     "to_category": {
                         "type": "string",
