@@ -68,23 +68,45 @@ def expense(client, amount: int, category: str, account: str = "bca") -> dict:
 
 
 def test_case_does_not_split_a_category(chat):
-    """"transport" and "Transport" are one thing, and must read as one."""
+    """"transport" and "Transport" are one thing, and must read as one.
+
+    A fresh group is created under its canonical name, so the row is
+    headed "Transportasi" even though nobody typed it. That is the
+    taxonomy doing its job; what matters here is that three spellings
+    produced one row.
+    """
     make_account(chat, "BCA", balance=1_000_000, alias="bca")
 
     expense(chat, 25_000, "transport")
     expense(chat, 33_500, "Transport")
     expense(chat, 10_000, "TRANSPORT")
 
-    assert spending(chat) == {"Transport": 68_500}
+    assert spending(chat) == {"Transportasi": 68_500}
+
+
+def test_synonyms_land_in_one_category(chat):
+    """The reason the groups exist: one thing, one row, whatever it is called."""
+    make_account(chat, "BCA", balance=1_000_000, alias="bca")
+
+    expense(chat, 25_000, "ongkos")
+    expense(chat, 33_500, "bensin")
+    expense(chat, 10_000, "parkir")
+
+    assert spending(chat) == {"Transportasi": 68_500}
 
 
 def test_a_new_category_is_stored_capitalised_without_mangling_acronyms(chat):
+    """A name in no group passes through, tidied but not translated.
+
+    This is a seed list, not a closed taxonomy, so "KPR" has to stay
+    "KPR" rather than being lower-cased or argued into "Lain-lain".
+    """
     make_account(chat, "BCA", balance=1_000_000, alias="bca")
 
-    expense(chat, 20_000, "  belanja  ")
-    expense(chat, 30_000, "PDAM")
+    expense(chat, 20_000, "  kucing  ")
+    expense(chat, 30_000, "KPR")
 
-    assert spending(chat) == {"Belanja": 20_000, "PDAM": 30_000}
+    assert spending(chat) == {"Kucing": 20_000, "KPR": 30_000}
 
 
 def test_the_model_is_shown_the_categories_it_already_has(chat):
@@ -110,7 +132,7 @@ def test_a_budget_sees_spending_written_in_another_case(chat):
     assert chat.put("/budgets", json={"category": "TRANSPORT", "amount": 150_000}).status_code == 200
 
     rows = {row["category"]: row for row in chat.get("/budgets").json()["budgets"]}
-    assert rows["Transport"]["spent"] == 100_000
+    assert rows["Transportasi"]["spent"] == 100_000
 
 
 # ----------------------------------------------------------------------
@@ -129,27 +151,27 @@ def test_moving_one_transaction_leaves_every_wallet_alone(chat):
     chat.adapter.queue(
         tool(
             "propose_recategorise",
-            {"transaction_id": transaction_id, "to_category": "Transport"},
+            {"transaction_id": transaction_id, "to_category": "Makan"},
         )
     )
     chat.adapter.queue(text("Ini draftnya."))
-    draft = send(chat, "ongkos itu masukin ke transport")["drafts"][0]
+    draft = send(chat, "ongkos itu masukin ke makan")["drafts"][0]
 
     assert draft["kind"] == "recategorise"
-    assert draft["payload"]["from_category"] == "Ongkos"
-    assert draft["payload"]["to_category"] == "Transport"
+    assert draft["payload"]["from_category"] == "Transportasi"
+    assert draft["payload"]["to_category"] == "Makan"
     assert draft["payload"]["amount"] == 25_000
     assert draft["payload"]["count"] == 1
 
     # Nothing written yet.
     assert balances(chat)["Cash"] == before
-    assert spending(chat) == {"Ongkos": 25_000}
+    assert spending(chat) == {"Transportasi": 25_000}
 
     assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
 
     # The whole point: the money did not move.
     assert balances(chat)["Cash"] == before
-    assert spending(chat) == {"Transport": 25_000}
+    assert spending(chat) == {"Makan": 25_000}
 
 
 def test_merging_a_category_moves_all_of_it_at_once(chat):
@@ -157,17 +179,17 @@ def test_merging_a_category_moves_all_of_it_at_once(chat):
 
     expense(chat, 25_000, "Ongkos", account="cash")
     expense(chat, 15_000, "Ongkos", account="cash")
-    expense(chat, 58_500, "Transport", account="cash")
+    expense(chat, 58_500, "Jajan", account="cash")
     before = balances(chat)["Cash"]
 
     chat.adapter.queue(
         tool(
             "propose_recategorise",
-            {"from_category": "ongkos", "to_category": "transport"},
+            {"from_category": "ongkos", "to_category": "makan"},
         )
     )
     chat.adapter.queue(text("Ini draftnya."))
-    draft = send(chat, "ongkos merge ke transport aja")["drafts"][0]
+    draft = send(chat, "ongkos merge ke makan aja")["drafts"][0]
 
     assert draft["payload"]["count"] == 2
     assert draft["payload"]["amount"] == 40_000
@@ -175,7 +197,7 @@ def test_merging_a_category_moves_all_of_it_at_once(chat):
     assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
 
     assert balances(chat)["Cash"] == before
-    assert spending(chat) == {"Transport": 98_500}
+    assert spending(chat) == {"Makan": 98_500}
 
 
 def test_a_move_changes_neither_the_total_nor_the_income(chat):
@@ -187,7 +209,7 @@ def test_a_move_changes_neither_the_total_nor_the_income(chat):
     totals = (report["expense_total"], report["income_total"])
 
     chat.adapter.queue(
-        tool("propose_recategorise", {"from_category": "Ongkos", "to_category": "Transport"})
+        tool("propose_recategorise", {"from_category": "Ongkos", "to_category": "Makan"})
     )
     chat.adapter.queue(text("Ini draftnya."))
     draft = send(chat, "pindahin")["drafts"][0]
@@ -205,7 +227,7 @@ def test_confirming_a_move_twice_moves_it_once(chat):
     expense(chat, 15_000, "Ongkos", account="cash")
 
     chat.adapter.queue(
-        tool("propose_recategorise", {"from_category": "Ongkos", "to_category": "Transport"})
+        tool("propose_recategorise", {"from_category": "Ongkos", "to_category": "Makan"})
     )
     chat.adapter.queue(text("Ini draftnya."))
     draft = send(chat, "pindahin")["drafts"][0]
@@ -213,7 +235,7 @@ def test_confirming_a_move_twice_moves_it_once(chat):
     assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
     assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 404
 
-    assert spending(chat) == {"Transport": 40_000}
+    assert spending(chat) == {"Makan": 40_000}
 
 
 def test_a_transfer_has_no_category_to_move(chat):
@@ -270,11 +292,16 @@ def test_an_unknown_source_category_lists_the_real_ones(chat):
 
 
 def test_moving_a_category_onto_itself_is_refused(chat):
+    """Two words, one category: "ongkos" and "Transport" are the same row.
+
+    The refusal names both sides, so the model can say what happened
+    rather than offer a card that would move nothing.
+    """
     make_account(chat, "BCA", balance=1_000_000, alias="bca")
     expense(chat, 25_000, "Transport")
 
     chat.adapter.queue(
-        tool("propose_recategorise", {"from_category": "transport", "to_category": "Transport"})
+        tool("propose_recategorise", {"from_category": "ongkos", "to_category": "Transport"})
     )
     chat.adapter.queue(text("Itu kategori yang sama."))
 
@@ -342,7 +369,7 @@ def test_another_users_transaction_cannot_be_moved(chat, engine, monkeypatch):
     routes_chat.set_adapter(chat.adapter)
 
     # Untouched.
-    assert spending(chat) == {"Transport": 25_000}
+    assert spending(chat) == {"Transportasi": 25_000}
 
 
 # ----------------------------------------------------------------------
@@ -360,7 +387,7 @@ def test_find_transactions_names_the_category(chat):
     send(chat, "transaksi terakhir apa")
 
     sent = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][-1]["content"]
-    assert "Ongkos" in sent
+    assert "Transportasi" in sent
     assert "25000" in sent
 
 
@@ -374,17 +401,18 @@ def test_find_transactions_can_be_narrowed_to_one_category(chat):
     send(chat, "transaksi ongkos mana")
 
     sent = [m for m in chat.adapter.calls[-1]["messages"] if m["role"] == "tool"][-1]["content"]
-    assert "Ongkos" in sent
+    assert "Transportasi" in sent
     assert "Makan" not in sent
 
 
 def test_a_merge_moves_legs_sitting_on_an_older_duplicate_spelling(chat, engine):
     """Folding the case stops new duplicates; it does not undo old ones.
 
-    A ledger written before the fold can hold "Ongkos" and "ongkos" as
-    two accounts, with the month's legs split between them. The merge
-    has to collect both, which is why each leg carries the account it
-    actually sits on rather than the draft naming one for all of them.
+    A ledger written before the fold can hold "Transportasi" and
+    "transportasi" as two accounts, with the month's legs split between
+    them. The merge has to collect both, which is why each leg carries
+    the account it actually sits on rather than the draft naming one for
+    all of them.
     """
     from sqlalchemy import select, update
     from sqlalchemy.orm import Session
@@ -401,7 +429,7 @@ def test_a_merge_moves_legs_sitting_on_an_older_duplicate_spelling(chat, engine)
         owner = db.scalar(select(User).where(User.email == "chat@example.com"))
         duplicate = Account(
             user_id=owner.id,
-            name="ongkos",
+            name="transportasi",
             type=AccountType.EXPENSE_CATEGORY,
             kind=AccountKind.EXPENSE,
             is_system=True,
@@ -412,7 +440,7 @@ def test_a_merge_moves_legs_sitting_on_an_older_duplicate_spelling(chat, engine)
         original = db.scalar(
             select(Account).where(
                 Account.user_id == owner.id,
-                Account.name == "Ongkos",
+                Account.name == "Transportasi",
                 Account.type == AccountType.EXPENSE_CATEGORY,
             )
         )
@@ -427,13 +455,13 @@ def test_a_merge_moves_legs_sitting_on_an_older_duplicate_spelling(chat, engine)
         db.commit()
 
     # Split across two spellings, exactly as the report showed it.
-    assert spending(chat) == {"Ongkos": 25_000, "ongkos": 15_000}
+    assert spending(chat) == {"Transportasi": 25_000, "transportasi": 15_000}
 
     chat.adapter.queue(
-        tool("propose_recategorise", {"from_category": "ongkos", "to_category": "Transport"})
+        tool("propose_recategorise", {"from_category": "transportasi", "to_category": "Makan"})
     )
     chat.adapter.queue(text("Ini draftnya."))
-    draft = send(chat, "gabung ongkos ke transport")["drafts"][0]
+    draft = send(chat, "gabung ongkos ke makan")["drafts"][0]
 
     assert draft["payload"]["count"] == 2
     assert draft["payload"]["amount"] == 40_000
@@ -444,7 +472,7 @@ def test_a_merge_moves_legs_sitting_on_an_older_duplicate_spelling(chat, engine)
     assert len({m["from_account_id"] for m in draft["payload"]["moves"]}) == 2
 
     assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
-    assert spending(chat) == {"Transport": 40_000}
+    assert spending(chat) == {"Makan": 40_000}
     assert balances(chat)["Cash"] == 460_000
 
 
@@ -479,19 +507,19 @@ def test_a_refunded_purchase_merges_without_doubling_itself(chat):
     refund = send(chat, "ongkos 20rb dibalikin")["drafts"][0]
     assert chat.post(f"/chat/drafts/{refund['id']}/confirm").status_code == 200
 
-    assert spending(chat) == {"Ongkos": 30_000}
+    assert spending(chat) == {"Transportasi": 30_000}
     before = balances(chat)["Cash"]
 
     chat.adapter.queue(
-        tool("propose_recategorise", {"from_category": "Ongkos", "to_category": "Transport"})
+        tool("propose_recategorise", {"from_category": "Ongkos", "to_category": "Makan"})
     )
     chat.adapter.queue(text("Ini draftnya."))
-    draft = send(chat, "gabung ongkos ke transport")["drafts"][0]
+    draft = send(chat, "gabung ongkos ke makan")["drafts"][0]
 
     assert draft["payload"]["count"] == 2
     assert draft["payload"]["amount"] == 30_000
 
     assert chat.post(f"/chat/drafts/{draft['id']}/confirm").status_code == 200
 
-    assert spending(chat) == {"Transport": 30_000}
+    assert spending(chat) == {"Makan": 30_000}
     assert balances(chat)["Cash"] == before

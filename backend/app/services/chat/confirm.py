@@ -37,6 +37,7 @@ from ..budgets import set_budget
 from ..drafts import TRANSACTION_TYPES, build_legs, occurred_at_of
 from ..goals import allocate, create_goal
 from ..posting import post_transaction
+from .dispatch import moved_away
 
 
 class DraftNotPending(Exception):
@@ -348,6 +349,13 @@ def _confirm_recategorise(db: DbSession, user_id: uuid.UUID, draft: Draft) -> di
         ).all()
     }
 
+    # Which of these legs have already left their category. The amount
+    # check below cannot see a move that has happened, because a move
+    # leaves the original's own entry exactly where it was — so without
+    # this, two cards for one merge confirmed one after the other would
+    # post it twice and overstate the destination by the whole amount.
+    gone = moved_away(db, user_id, {uuid.UUID(m["from_account_id"]) for m in moves})
+
     group_id = uuid.uuid4()
     posted = []
     replayed = True
@@ -380,6 +388,11 @@ def _confirm_recategorise(db: DbSession, user_id: uuid.UUID, draft: Draft) -> di
             draft.status = DraftStatus.STALE
             db.flush()
             raise DraftNotPending("Kategori transaksinya sudah berubah. Coba ulangi.")
+
+        if (original.id, from_id) in gone:
+            draft.status = DraftStatus.STALE
+            db.flush()
+            raise DraftNotPending("Kategorinya sudah dipindah. Coba ulangi.")
 
         result = post_transaction(
             db,

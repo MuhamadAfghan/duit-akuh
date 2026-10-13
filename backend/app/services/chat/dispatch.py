@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.orm import aliased
 
 from ...domain.balances import (
     category_total,
@@ -46,6 +47,7 @@ from ...models import (
     Goal,
     Transaction,
     TransactionStatus,
+    TransactionType,
     User,
 )
 from ...money import MoneyError, positive_rupiah, rupiah
@@ -388,9 +390,10 @@ def _category_accounts(
     would leave the user staring at the other.
 
     ``group`` widens it to the whole synonym group, which is what a
-    *reading* of "ongkos" means. A merge deliberately does not use it: if
-    "Ongkos" and "Transport" are two accounts in one group, treating them
-    as already-the-same would refuse the very merge that joins them.
+    *reading* of "ongkos" means. A merge asks for the exact spelling
+    first and only then the group — see :func:`_named_categories` — or
+    naming one member of a group as the destination would resolve to
+    another member of it.
     """
     needles = (
         resolve_expense(name).aliases | resolve_income(name).aliases
@@ -1022,6 +1025,173 @@ def _category_entry(
     return candidates[0]
 
 
+def moved_away(
+    db: DbSession, user_id: uuid.UUID, account_ids: set[uuid.UUID]
+) -> set[tuple[uuid.UUID, uuid.UUID]]:
+    """Legs a posted move has already taken out of these categories.
+
+    A reclassification does not edit the leg it refiles. It posts a
+    counter-pair beside it — crediting the category the money left,
+    debiting the one it arrived in — because the original is not wrong
+    and deleting nothing is the rule (FR02/AC08). So a category that has
+    already been merged still holds both halves of that move, netting to
+    zero, and both halves are still there to be found.
+
+    Returned as ``(transaction, account)`` pairs naming both halves, so
+    the caller can skip a leg by the pair it sits on.
+
+    The join is what tells the two sides of a move apart. A move's credit
+    lands on an account its original also has a leg on; its debit lands
+    on one the original never touched. Matching only the shared account
+    keeps the arriving money movable — otherwise merging the
+    *destination* of an earlier move would have left the money that came
+    in through it behind.
+    """
+    if not account_ids:
+        return set()
+
+    original = aliased(Entry)
+
+    rows = db.execute(
+        select(Transaction.id, Transaction.reverses_id, Entry.account_id)
+        .join(Entry, Entry.transaction_id == Transaction.id)
+        .join(
+            original,
+            (original.transaction_id == Transaction.reverses_id)
+            & (original.account_id == Entry.account_id),
+        )
+        .where(
+            Transaction.user_id == user_id,
+            Transaction.type == TransactionType.RECLASSIFY,
+            Transaction.status == TransactionStatus.POSTED,
+            Entry.account_id.in_(account_ids),
+        )
+    ).all()
+
+    gone: set[tuple[uuid.UUID, uuid.UUID]] = set()
+
+    for move_id, original_id, account_id in rows:
+        gone.add((original_id, account_id))
+        gone.add((move_id, account_id))
+
+    return gone
+
+
+def _current_category_leg(
+    db: DbSession, user_id: uuid.UUID, transaction: Transaction, accounts: dict[uuid.UUID, Account]
+) -> tuple[Transaction, Entry]:
+    """Where this transaction's category sits *now*, and the leg holding it.
+
+    Because a move leaves the original alone, the original's own leg
+    still names the category it was first filed under. Reading it to move
+    the same transaction a second time produced a card headed
+    "ongkos -> makan" for money the breakdown already showed under
+    Transportasi, and confirming it would have left the amount sitting in
+    two categories at once.
+
+    So the chain is followed to its end: the last move is where the money
+    is, and the next one has to reverse *that* rather than the original.
+    """
+    current = transaction
+    entry = _category_entry(transaction, accounts)
+    seen = {transaction.id}
+
+    while True:
+        move = db.scalar(
+            select(Transaction)
+            .where(
+                Transaction.user_id == user_id,
+                Transaction.reverses_id == current.id,
+                Transaction.type == TransactionType.RECLASSIFY,
+                Transaction.status == TransactionStatus.POSTED,
+            )
+            .order_by(Transaction.created_at)
+            .limit(1)
+        )
+
+        if move is None or move.id in seen:
+            return current, entry
+
+        # The other side of the counter-pair is where it landed. Anything
+        # but one leg is not a shape this understands, so the chain stops
+        # rather than guessing.
+        landed = [e for e in move.entries if e.account_id != entry.account_id]
+
+        if len(landed) != 1:
+            return current, entry
+
+        seen.add(move.id)
+        current, entry = move, landed[0]
+
+
+def _named_categories(db: DbSession, user_id: uuid.UUID, name: str) -> list[Account]:
+    """The categories this name refers to: the exact spelling, else the group.
+
+    **Exact first is what makes a merge inside one synonym group
+    possible at all.** "ongkos", "bensin" and "transport" are three
+    aliases of Transportasi, and a ledger written before the groups
+    existed can hold all three as separate accounts. Resolving either
+    side through the group hands back the oldest of them, so
+    "pindahkan ongkos ke transport" came back as "ongkos -> bensin",
+    for Rp0 — the person was naming a destination and could not reach
+    it.
+
+    The group is still the fallback, and has to be: once the merge is
+    done only "Transportasi" is left, and "pindahin ongkos" has to find
+    it. The person's word is the one they will keep using, whatever the
+    account ended up called.
+    """
+    exact = _category_accounts(db, user_id, name)
+
+    return exact or _category_accounts(db, user_id, name, group=True)
+
+
+def _target_category(db: DbSession, user_id: uuid.UUID, name: str, *, income: bool) -> Account:
+    """The destination, created under its canonical name if it is new.
+
+    Filing a *new* expense goes through `expense_category`, which always
+    resolves the group: "ongkos 25rb" should land in whatever account
+    this ledger already keeps transport in. Here the name is a
+    destination somebody chose, so :func:`_named_categories` decides,
+    and the group only has the last word when nothing is called that
+    yet.
+    """
+    wanted = AccountKind.INCOME if income else AccountKind.EXPENSE
+
+    for account in _named_categories(db, user_id, name):
+        if account.kind is wanted:
+            return account
+
+    return income_category(db, user_id, name) if income else expense_category(db, user_id, name)
+
+
+def _pending_twin(db: DbSession, user_id: uuid.UUID, payload: dict) -> Draft | None:
+    """A move already waiting that would do exactly this.
+
+    "Pindahkan ongkos dan bensin ke transport" is one sentence and the
+    model answers it with one call per category — sometimes with the same
+    call twice, which is how three cards came back for two merges. Two
+    identical cards are not two acts: they are one act the person has to
+    decide twice, and both would post.
+    """
+    waiting = db.scalars(
+        select(Draft).where(
+            Draft.user_id == user_id,
+            Draft.kind == "recategorise",
+            Draft.status == DraftStatus.PENDING,
+        )
+    ).all()
+
+    for draft in waiting:
+        stored = draft.payload or {}
+        same_target = stored.get("to_account_id") == payload["to_account_id"]
+
+        if same_target and stored.get("moves") == payload["moves"]:
+            return draft
+
+    return None
+
+
 def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> dict:
     """Draft a move of one or many transactions into another category.
 
@@ -1070,10 +1240,10 @@ def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> 
         if transaction.status is TransactionStatus.REVERSED:
             raise ToolError("Transaksi ini sudah dibatalkan, kategorinya tidak perlu dipindah.")
 
-        moves = [(transaction, _category_entry(transaction, accounts))]
+        moves = [_current_category_leg(db, user_id, transaction, accounts)]
         source = accounts[moves[0][1].account_id]
     else:
-        sources = _category_accounts(db, user_id, from_name)
+        sources = _named_categories(db, user_id, from_name)
 
         if not sources:
             known = known_expense_categories(db, user_id)
@@ -1095,11 +1265,19 @@ def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> 
             .order_by(Transaction.occurred_at)
         ).all()
 
+        # Both halves of an earlier move are skipped. They cancel each
+        # other out, so the net about to be moved is the same either
+        # way — but counting them made "pindahkan ongkos ke transport"
+        # answer a category merged last week with "3 transaksi, Rp0",
+        # and confirming it a second time would have moved the same
+        # money twice.
+        gone = moved_away(db, user_id, source_ids)
+
         moves = [
             (row, entry)
             for row in rows
             for entry in row.entries
-            if entry.account_id in source_ids
+            if entry.account_id in source_ids and (row.id, entry.account_id) not in gone
         ]
 
         if len(moves) > MAX_RECATEGORISE:
@@ -1114,10 +1292,7 @@ def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> 
     # The target follows the source's nature. Filing an expense under an
     # income category would make a month's spending read as earnings, and
     # the ledger would still balance while saying something false.
-    if source.kind is AccountKind.INCOME:
-        target = income_category(db, user_id, to_name)
-    else:
-        target = expense_category(db, user_id, to_name)
+    target = _target_category(db, user_id, to_name, income=source.kind is AccountKind.INCOME)
 
     source_ids = {entry.account_id for _, entry in moves}
 
@@ -1129,6 +1304,17 @@ def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> 
     # bigger than the one about to happen.
     moved = sum(entry.amount for _, entry in moves)
     amount = abs(moved)
+
+    # A category that has already been emptied still holds its entries:
+    # the original debits and the credits of the move that took them
+    # away, netting to nothing. Offering "pindahkan Rp0" is a
+    # confirmation for an act with no effect, and repeating the request
+    # only stacks more of them.
+    if amount == 0:
+        raise ToolError(
+            f"Kategori '{source.name}' sudah kosong - isinya nol setelah dihitung "
+            "bersih, jadi tidak ada yang bisa dipindahkan."
+        )
 
     snapshots = {s.id: s for s in account_snapshots(db, user_id)}
 
@@ -1155,31 +1341,33 @@ def tool_propose_recategorise(db: DbSession, user_id: uuid.UUID, args: dict) -> 
         },
     ]
 
-    draft = _store_draft(
+    payload = {
+        "from_category": source.name,
+        "to_category": target.name,
+        "to_account_id": str(target.id),
+        "amount": amount,
+        "count": len(moves),
+        # One row per leg, each naming the account it actually sits on. A
+        # single `from_account_id` was wrong the moment a category
+        # existed under two spellings: half the legs hang off the other
+        # row, and confirming would have looked for them on an account
+        # they were never on.
+        "moves": [
+            {
+                "transaction_id": str(transaction.id),
+                "from_account_id": str(entry.account_id),
+                # Signed, because the direction is part of the fact.
+                "amount": entry.amount,
+            }
+            for transaction, entry in moves
+        ],
+    }
+
+    draft = _pending_twin(db, user_id, payload) or _store_draft(
         db,
         user_id=user_id,
         kind="recategorise",
-        payload={
-            "from_category": source.name,
-            "to_category": target.name,
-            "to_account_id": str(target.id),
-            "amount": amount,
-            "count": len(moves),
-            # One row per leg, each naming the account it actually sits
-            # on. A single `from_account_id` was wrong the moment a
-            # category existed under two spellings: half the legs hang
-            # off the other row, and confirming would have looked for
-            # them on an account they were never on.
-            "moves": [
-                {
-                    "transaction_id": str(transaction.id),
-                    "from_account_id": str(entry.account_id),
-                    # Signed, because the direction is part of the fact.
-                    "amount": entry.amount,
-                }
-                for transaction, entry in moves
-            ],
-        },
+        payload=payload,
         impact=rows_impact,
     )
 

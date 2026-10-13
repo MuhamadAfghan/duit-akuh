@@ -286,12 +286,16 @@ def test_setting_a_budget_twice_replaces_rather_than_adds(api):
 @requires_db
 @pytest.mark.integration
 def test_a_budget_can_be_set_before_the_category_is_ever_used(api):
-    """ "Keep transport under 500k" comes before the first trip."""
+    """ "Keep transport under 500k" comes before the first trip.
+
+    Named by its canonical spelling, because a budget set on a category
+    nobody has used yet is the one place a fresh group gets created.
+    """
     api.put("/budgets", json={"category": "Transport", "amount": 500_000}).raise_for_status()
 
     status = budgets(api)["budgets"][0]
 
-    assert status["category"] == "Transport"
+    assert status["category"] == "Transportasi"
     assert status["spent"] == 0
 
 

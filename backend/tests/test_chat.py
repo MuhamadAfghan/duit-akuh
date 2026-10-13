@@ -1895,7 +1895,8 @@ def test_a_category_with_no_budget_is_not_called_within_one(chat):
     data = [m for m in chat.get("/chat/messages").json() if m["role"] == "assistant"][-1]["view"][
         "data"
     ]
-    kopi = next(c for c in data["categories"] if c["name"] == "Kopi")
+    # "kopi" is one of Makan's spellings, so that is the row it lands in.
+    kopi = next(c for c in data["categories"] if c["name"] == "Makan")
 
     assert kopi["limit"] is None
     assert kopi["over"] is None
