@@ -1,0 +1,8 @@
+[Unit]
+Description=Pemicu deploy Duitakuh (CI menyentuh .deploy/trigger)
+
+[Path]
+PathChanged=/opt/duitakuh/.deploy/trigger
+
+[Install]
+WantedBy=multi-user.target

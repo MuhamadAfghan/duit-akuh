@@ -1,0 +1,6 @@
+[Unit]
+Description=Duitakuh post-deploy (ekstrak, migrasi, restart)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/duitakuh-post-deploy

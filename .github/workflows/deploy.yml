@@ -1,7 +1,7 @@
-name: Deploy ke cPanel
+name: Deploy ke VPS
 
 # Push ke `main` deploy ke produksi.
-# Bisa juga dijalankan manual: Actions -> Deploy ke cPanel -> Run workflow.
+# Bisa juga dijalankan manual: Actions -> Deploy ke VPS -> Run workflow.
 on:
   push:
     branches: [main]
@@ -35,9 +35,9 @@ jobs:
         run: ruff check .
 
       # Integration tests need a live database and are skipped without
-      # TEST_DATABASE_URL. The cPanel MariaDB only listens on localhost, so
-      # the runner cannot reach it; the pure money rules still run here and
-      # the DB-backed ones run against the real server over an SSH tunnel.
+      # TEST_DATABASE_URL. The production Postgres only listens on the VPS
+      # loopback, so the runner cannot reach it; the pure money rules still
+      # run here.
       - name: Pytest (aturan murni)
         working-directory: backend
         run: python -m pytest -q -m "not integration"
@@ -52,41 +52,33 @@ jobs:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_PORT: ${{ secrets.SSH_PORT }}
       SSH_USER: ${{ secrets.SSH_USER }}
-      # Each deployment directory under $HOME is named after the domain it
-      # serves, so one value is both the path and the smoke-test host.
-      WEB_HOST: ${{ vars.WEB_HOST }}
-      API_HOST: ${{ vars.API_HOST }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          # Pinned to the server's runtime: CloudLinux Node Selector tops
-          # out at 20.20.2, so building on 22 could emit syntax the server
-          # cannot parse.
-          node-version: '20.20.2'
+          # Same major as the VPS runtime.
+          node-version: '22'
           cache: npm
 
       - name: Install dependency
-        # `engines` in package.json asks for >=22.12, which this image does
-        # not satisfy. npm only warns by default, but be explicit so a
-        # future engine-strict default cannot break the build.
         run: npm ci --engine-strict=false
 
       - name: Build frontend (standalone)
         env:
           BUILD_STANDALONE: '1'
-          # Baked into routes-manifest.json at build time, which is why the
-          # API host has to be known here and not at boot.
-          BACKEND_URL: https://${{ vars.API_HOST }}
+          # Baked into routes-manifest.json at build time. The frontend and
+          # the API run side by side on the VPS, so the loopback address is
+          # what the Next server proxies /srv/* to.
+          BACKEND_URL: http://127.0.0.1:8000
         run: npm run build
 
       - name: Bangun artifact frontend
         run: |
           # `standalone` omits these two on purpose: static assets and
-          # public/ are expected to be served from alongside server.js.
+          # public/ are expected to sit alongside server.js.
           cp -r .next/static .next/standalone/.next/static
           cp -r public .next/standalone/public
           tar -czf /tmp/release-web.tar.gz -C .next/standalone .
@@ -97,7 +89,6 @@ jobs:
           stage="$(mktemp -d)"
           cp -r backend/app backend/alembic "$stage/"
           cp backend/alembic.ini backend/requirements-prod.txt "$stage/"
-          cp deploy/passenger_wsgi.py "$stage/"
           find "$stage" -name '__pycache__' -type d -prune -exec rm -rf {} +
           tar -czf /tmp/release-api.tar.gz -C "$stage" .
           ls -lh /tmp/release-api.tar.gz
@@ -115,37 +106,28 @@ jobs:
           if ! ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
                    -o ConnectTimeout=25 "$SSH_USER@$SSH_HOST" 'echo ok'; then
             echo "::error::Tidak bisa SSH ke $SSH_HOST:$SSH_PORT dari runner GitHub."
-            echo "::error::Kemungkinan besar IP runner diblokir firewall hosting (CSF/Imunify360)."
-            echo "::error::Minta whitelist ke support Jagoan Hosting, atau pakai self-hosted runner."
+            echo "::error::Cek firewall VPS (port $SSH_PORT harus terbuka untuk runner GitHub) dan secret SSH_*."
             exit 1
           fi
 
       - name: Kirim artifact
         run: |
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
-              "$SSH_USER@$SSH_HOST" "mkdir -p ~/$API_HOST/releases ~/$WEB_HOST/releases"
+              "$SSH_USER@$SSH_HOST" 'mkdir -p ~/deploy'
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
-              /tmp/release-api.tar.gz \
-              "$SSH_USER@$SSH_HOST:~/$API_HOST/releases/api-${{ github.sha }}.tar.gz"
+              /tmp/release-api.tar.gz "$SSH_USER@$SSH_HOST:~/deploy/api-${{ github.sha }}.tar.gz"
           scp -i ~/.ssh/deploy_key -P "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
-              /tmp/release-web.tar.gz \
-              "$SSH_USER@$SSH_HOST:~/$WEB_HOST/releases/web-${{ github.sha }}.tar.gz"
+              /tmp/release-web.tar.gz "$SSH_USER@$SSH_HOST:~/deploy/web-${{ github.sha }}.tar.gz"
 
-      # Backend first: the frontend proxies /api/* to it, so a frontend
-      # that went live against a failed backend would serve a broken app.
-      - name: Aktifkan backend
+      # Backend dan frontend diaktifkan sekaligus di VPS: migrasi, restart,
+      # health check, dan auto-rollback ada di duitakuh-post-deploy.
+      - name: Aktifkan release
         run: |
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
               "$SSH_USER@$SSH_HOST" 'bash -s' -- \
-              "/home/$SSH_USER/$API_HOST/releases/api-${{ github.sha }}.tar.gz" "$API_HOST" \
-              < deploy/activate-api.sh
-
-      - name: Aktifkan frontend
-        run: |
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes \
-              "$SSH_USER@$SSH_HOST" 'bash -s' -- \
-              "/home/$SSH_USER/$WEB_HOST/releases/web-${{ github.sha }}.tar.gz" "$WEB_HOST" \
-              < deploy/activate-web.sh
+              "/home/$SSH_USER/deploy/api-${{ github.sha }}.tar.gz" \
+              "/home/$SSH_USER/deploy/web-${{ github.sha }}.tar.gz" \
+              < deploy/activate.sh
 
       - name: Bersihkan kunci
         if: always()

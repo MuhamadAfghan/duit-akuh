@@ -1,0 +1,19 @@
+[Unit]
+Description=Duitakuh (lega) API - FastAPI/uvicorn
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/duitakuh/backend
+EnvironmentFile=/opt/duitakuh/backend/.env
+ExecStart=/opt/duitakuh/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

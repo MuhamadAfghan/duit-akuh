@@ -1,0 +1,22 @@
+[Unit]
+Description=Duitakuh (lega) web - Next.js
+After=network-online.target duitakuh-api.service
+Wants=duitakuh-api.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/duitakuh/.deploy/web
+Environment=NODE_ENV=production
+Environment=PORT=3033
+Environment=HOSTNAME=127.0.0.1
+Environment=BACKEND_URL=http://127.0.0.1:8000
+Environment=NODE_OPTIONS=--max-old-space-size=384
+ExecStart=/usr/bin/node /opt/duitakuh/.deploy/web/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

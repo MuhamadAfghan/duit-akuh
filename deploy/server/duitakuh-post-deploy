@@ -1,0 +1,79 @@
+#!/bin/bash
+# Dipicu oleh duitakuh-deploy.path saat user `deploy` (CI) menyentuh
+# /opt/duitakuh/.deploy/trigger. Isinya TETAP (root-owned); CI hanya boleh
+# menaruh tarball di .deploy/incoming dan memilih mode (deploy|rollback).
+set -uo pipefail
+D=/opt/duitakuh
+DEP=$D/.deploy
+MODE=$(tr -d '[:space:]' < "$DEP/trigger" 2>/dev/null || true)
+[ "$MODE" = rollback ] || MODE=deploy
+exec >"$DEP/last.log" 2>&1
+chmod 644 "$DEP/last.log"
+
+U() { runuser -u ubuntu -- "$@"; }
+res() { echo "$1 $(date +%s)" > "$DEP/result.tmp"; chown deploy:deploy "$DEP/result.tmp"; mv -f "$DEP/result.tmp" "$DEP/result"; }
+log() { printf '\n==> %s\n' "$*"; }
+
+healthy() {
+    for _ in $(seq 1 30); do
+        a=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8000/health || true)
+        w=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3033/srv/health || true)
+        [ "$a" = 200 ] && [ "$w" = 200 ] && { echo "api=$a web=$w"; return 0; }
+        sleep 2
+    done
+    echo "api=$a web=$w"; return 1
+}
+
+restore_prev() {
+    log "RESTORE kode sebelumnya"
+    if [ -f "$DEP/snap/api-prev.tgz" ]; then
+        U rm -rf "$D/backend/app" "$D/backend/alembic"
+        U tar -xzf "$DEP/snap/api-prev.tgz" -C "$D/backend"
+    fi
+    if [ -d "$DEP/web.prev" ]; then
+        U rm -rf "$DEP/web.bad"; [ -d "$DEP/web" ] && U mv "$DEP/web" "$DEP/web.bad"
+        U mv "$DEP/web.prev" "$DEP/web"
+    fi
+    systemctl restart duitakuh-api duitakuh-web
+}
+
+if [ "$MODE" = rollback ]; then
+    log "MODE rollback"
+    restore_prev
+    healthy && res ok-rollback || res fail-rollback
+    exit 0
+fi
+
+log "MODE deploy"
+[ -f "$DEP/incoming/api.tgz" ] && [ -f "$DEP/incoming/web.tgz" ] || { echo "tarball tidak lengkap"; res fail-incoming; exit 1; }
+
+log "Snapshot kode lama"
+U tar -czf "$DEP/snap/api-prev.tgz" -C "$D/backend" app alembic alembic.ini requirements-prod.txt
+U rm -rf "$DEP/web.prev" "$DEP/web.new"
+[ -d "$DEP/web" ] && U mv "$DEP/web" "$DEP/web.prev"
+
+log "Ekstrak backend"
+U rm -rf "$D/backend/app" "$D/backend/alembic"
+U tar -xzf "$DEP/incoming/api.tgz" -C "$D/backend" --no-same-owner
+log "Ekstrak frontend (standalone)"
+U mkdir -p "$DEP/web.new"
+U tar -xzf "$DEP/incoming/web.tgz" -C "$DEP/web.new" --no-same-owner
+[ -f "$DEP/web.new/server.js" ] || { echo "bukan bundle standalone"; restore_prev; res fail-bundle; exit 1; }
+U mv "$DEP/web.new" "$DEP/web"
+rm -f "$DEP/incoming/api.tgz" "$DEP/incoming/web.tgz"
+
+log "pip install + migrasi"
+if ! U bash -c "cd $D/backend && .venv/bin/pip install -q -r requirements-prod.txt && set -a && . ./.env && set +a && .venv/bin/alembic upgrade head"; then
+    echo "MIGRASI/DEPENDENCY GAGAL"; restore_prev; res fail-migrate; exit 1
+fi
+
+log "Restart service"
+systemctl restart duitakuh-api duitakuh-web
+log "Health check"
+if healthy; then
+    log "SUKSES"; res ok
+else
+    echo "HEALTH GAGAL"; restore_prev
+    healthy && res fail-health-rolledback || res fail-health
+    exit 1
+fi
