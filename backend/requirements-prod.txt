@@ -1,4 +1,4 @@
-# Runtime-only dependency set for the cPanel/Passenger deployment.
+# Runtime-only dependency set for the production deployment (VPS, systemd + uvicorn).
 #
 # Deliberately NOT `-r requirements.txt`: that file carries pytest and
 # ruff, and the shared host has a 15 GB quota shared with the other
@@ -7,9 +7,13 @@
 
 fastapi>=0.115
 sqlalchemy>=2.0.36
-# MariaDB 10.6 on the cPanel host. PyMySQL is pure Python, so it needs
-# no compiler or libmysqlclient on a box that has neither.
+# Production runs on PostgreSQL 17 (Docker). psycopg[binary] ships its own
+# libpq, so no compiler or system client library is needed.
+psycopg[binary]>=3.2
+# MariaDB support is kept (the models are engine-agnostic) for tests and for
+# reading the legacy cPanel database.
 PyMySQL>=1.1
+python-dotenv>=1.0
 alembic>=1.14
 pydantic[email]>=2.9
 python-multipart>=0.0.12
