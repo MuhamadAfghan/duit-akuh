@@ -9,6 +9,20 @@ The chat orchestrator is wired to the lumi-ai adapter; see
 
 from __future__ import annotations
 
+import os
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env file (must be before any import that uses env vars)
+_base_dir = Path(__file__).resolve().parent.parent
+env_path = _base_dir / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+    print(f"Loaded .env from {env_path}", file=sys.stderr)
+else:
+    print("WARNING: No .env at " + env_path, file=sys.stderr)
+
 from fastapi import FastAPI, HTTPException
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
