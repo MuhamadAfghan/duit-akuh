@@ -15,13 +15,14 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: duitakuh
-      POSTGRES_PASSWORD: duitakuh_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-duitakuh_dev}
       POSTGRES_DB: duitakuh
       # Deterministic collation, so ordering does not differ between a
       # developer's machine and the server.
       LANG: C.UTF-8
     ports:
-      - "5433:5432"
+      # Loopback only: the DB must never be reachable from the internet.
+      - "127.0.0.1:5433:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
